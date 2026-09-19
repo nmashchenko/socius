@@ -17,10 +17,10 @@ struct CareButton: View {
 }
 
 struct PlaygroundView: View {
-    @Bindable var model: PetModel
-    var presence: EdgeDockController? = nil
-    var openTool: ((PocketTool) -> Void)? = nil
-    var replayOnboarding: (() -> Void)? = nil
+    @State private var model = PetModel()
+    @State private var presence = PlaygroundPresence()
+    @State private var showingOnboarding = false
+    @State private var selectedTool: PocketTool?
     @State private var petPosition = CGSize.zero
     @GestureState private var drag = CGSize.zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,8 +32,8 @@ struct PlaygroundView: View {
             VStack(alignment: .leading, spacing: 24) {
                 Text("Playground").font(.system(size: 28, weight: .medium, design: .serif)).foregroundStyle(Palette.ink)
                 Text("Preview your pet and try its controls.").font(.system(size: 12)).foregroundStyle(Palette.muted)
-                if let replayOnboarding {
-                    Button(action: replayOnboarding) {
+                Group {
+                    Button { showingOnboarding = true } label: {
                         Label("Replay onboarding", systemImage: "arrow.counterclockwise")
                     }
                 }
@@ -41,12 +41,29 @@ struct PlaygroundView: View {
                 Spacer(minLength: 0)
                 HStack {
                     Circle().fill(Palette.green).frame(width: 5, height: 5)
-                    Text("Developer playground · controls affect your desktop pet").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    Text("Developer playground · isolated preview").font(.system(size: 11)).foregroundStyle(Palette.muted)
                     Spacer()
 
                 }
             }.padding(32)
         }
+        .alert("Tool selected", isPresented: Binding(get: { selectedTool != nil }, set: { if !$0 { selectedTool = nil } })) {
+            Button("OK") { selectedTool = nil }
+        } message: {
+            Text("\(selectedTool?.rawValue ?? "Tool") selected in the preview. Use the desktop pocket for live tools and saved data.")
+        }
+        .sheet(isPresented: $showingOnboarding) {
+            WelcomeView(model: model) { showingOnboarding = false; presence.simulateIdle() }
+                .frame(width: 760, height: 560)
+        }
+        .task {
+            while !Task.isCancelled {
+                presence.tick(held: model.panelOpen || model.shellGameActive || model.offering != nil || [.eating, .playing].contains(model.mood))
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+        }
+        .onChange(of: model.reaction) { presence.interact() }
+        .onChange(of: model.panelOpen) { _, open in if open { presence.interact() } else { presence.simulateIdle() } }
         .background(Palette.cream)
         .preferredColorScheme(.light)
         .buttonStyle(PocketButtonStyle(compact: true))
@@ -72,7 +89,7 @@ struct PlaygroundView: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 sectionLabel("PREVIEW A MOOD")
-                Text("Developer only · changes the desktop pet too")
+                Text("Changes only this preview")
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 HStack(spacing: 6) {
                     ForEach([PetModel.Mood.content, .hungry, .grumpy], id: \.rawValue) { mood in
@@ -95,9 +112,9 @@ struct PlaygroundView: View {
             Button("Simulate neglected") {
                 model.preview(.hungry); model.happiness = 10
             }
-            if let presence {
+            Group {
                 VStack(alignment: .leading, spacing: 10) {
-                    sectionLabel("DESKTOP INACTIVITY")
+                    sectionLabel("PREVIEW INACTIVITY")
                     HStack {
                         Button("Go idle now") { presence.simulateIdle() }
                             .disabled(presence.phase != .engaged)
@@ -107,8 +124,8 @@ struct PlaygroundView: View {
                         .disabled(![.tucked, .peeking].contains(presence.phase))
                     Text("State: \(String(describing: presence.phase))")
                         .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.muted)
-                    DeveloperRuntimeView(presence: presence)
-                    Text("Timing overrides reset when the app restarts.")
+                    DeveloperRuntimeView(idleSeconds: $presence.idleSeconds, peekSeconds: $presence.peekSeconds)
+                    Text("Preview timings do not change the desktop pet.")
                         .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 }
             }
@@ -176,13 +193,16 @@ struct PlaygroundView: View {
                     petPosition.height = min(25, max(-20, petPosition.height + value.translation.height))
                 })
                 if model.panelOpen {
-                    PocketView(model: model, close: { model.panelOpen = false }, openTool: openTool)
+                    PocketView(model: model, close: { model.panelOpen = false }, openTool: { selectedTool = $0 })
                         .frame(maxWidth: .infinity)
                         .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
                 }
             }.padding(.horizontal, 24)
+                .offset(x: presence.phase == .tucked ? 300 : presence.phase == .peeking ? 240 : 0)
+                .opacity(presence.phase == .tucked ? 0.25 : 1)
+                .animation(reduceMotion || model.quiet ? nil : .easeInOut(duration: 0.3), value: presence.phase)
                 .animation(reduceMotion || model.quiet ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.2), value: model.panelOpen)
-        }.frame(height: 380)
+        }.frame(height: 380).clipped()
     }
     private func needMeter(_ title: String, value: Double, icon: String) -> some View {
         VStack(spacing: 6) {
@@ -201,5 +221,28 @@ struct PlaygroundView: View {
     }
     private func sectionLabel(_ text: String) -> some View {
         Text(text).font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.3).foregroundStyle(Palette.muted)
+    }
+}
+
+/// Preview-only timing; never holds or moves a desktop window.
+@Observable final class PlaygroundPresence {
+    enum Phase { case engaged, tucked, peeking }
+    private(set) var phase: Phase = .engaged
+    var idleSeconds: Double = 30
+    var peekSeconds: Double = 300
+    private var changed = Date()
+    private var wasHeld = false
+    func interact() { phase = .engaged; changed = Date() }
+    func simulateIdle() { phase = .tucked; changed = Date() }
+    func simulateReminder() { phase = .peeking; changed = Date() }
+    func tick(held: Bool, now: Date = Date()) {
+        if held { interact(); wasHeld = true; return }
+        if wasHeld { wasHeld = false; simulateIdle(); return }
+        let elapsed = now.timeIntervalSince(changed)
+        switch phase {
+        case .engaged: if elapsed >= max(1, idleSeconds) { simulateIdle() }
+        case .tucked: if elapsed >= max(1, peekSeconds) { simulateReminder() }
+        case .peeking: if elapsed >= 3 { simulateIdle() }
+        }
     }
 }

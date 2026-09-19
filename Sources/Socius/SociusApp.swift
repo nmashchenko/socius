@@ -67,7 +67,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
                 if CommandLine.arguments.contains("--welcome") { WelcomeView(model: pet, finish: {}) }
                 else if toolName == "Home" { PocketView(model: pet, close: {}, nativePopover: true, hub: previewHub) }
                 else if toolName != nil { PocketToolView(hub: previewHub, pet: pet, back: {}, close: {}) }
-                else { PlaygroundView(model: pet, presence: edgeDock) }
+                else { PlaygroundView() }
             }.frame(width: width, height: height)
             let host = NSHostingView(rootView: view)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -182,7 +182,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
             window.backgroundColor = NSColor(red: 0.96, green: 0.95, blue: 0.91, alpha: 1)
             window.minSize = NSSize(width: 900, height: 680)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: PlaygroundView(model: pet, presence: edgeDock, openTool: { [weak self] in self?.showTool($0) }, replayOnboarding: { [weak self] in self?.showWelcome() }))
+            window.contentView = NSHostingView(rootView: PlaygroundView())
             window.center(); studio = window
         }
         studio?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)

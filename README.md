@@ -38,7 +38,7 @@ AI Credits automatically uses installed Codex and Claude CLIs concurrently, with
 
 If Claude CLI is missing, an explicit one-time Keychain sync is offered alongside Install CLI. Its notice explains that the token is sent only to Anthropic over HTTPS, never saved or logged, and not sent elsewhere. This is authenticated network access, not entirely local operation. Missing Codex CLI offers installation because API keys cannot report ChatGPT subscription allowances.
 
-Developer playground includes live process memory footprint (MB, once per second), peak while open, editable idle/peek delays, a 5-second demo preset and production reset. Timing overrides live only for the current app session.
+Developer playground includes live process memory footprint (MB, once per second), peak while open, editable idle/peek delays, a 5-second demo preset and production reset. Timing overrides affect only the playground preview.
 
 ## Pet interactions
 
@@ -58,7 +58,7 @@ Developer playground includes live process memory footprint (MB, once per second
 open build/Socius.app --args --developer
 ```
 
-After onboarding, the Interaction playground opens automatically in developer mode and is also accessible from the menu-bar paw or Socius’s context menu. Its sidebar has mood presets, neglect, care, idle, and reminder simulations. These controls affect the desktop pet. Ordinary launches omit the playground.
+After onboarding, the Interaction playground opens automatically in developer mode and is also accessible from the menu-bar paw or Socius’s context menu. Its sidebar has mood presets, neglect, care, idle, and reminder simulations. The playground owns a separate pet and preview timers; care, quiet mode, idle simulations, and onboarding replay do not change the desktop pet. Tool selection is preview-only; use the desktop pocket for live tools. Ordinary launches omit the playground.
 
 For a direct tool launch: `open build/Socius.app --args --tool Notes` (quit an already-running instance first). A native preview with disposable sample data can be rendered with `build/Socius.app/Contents/MacOS/Socius --render-preview --tool Notes`.
 

@@ -2,16 +2,17 @@ import SwiftUI
 import Darwin
 
 struct DeveloperRuntimeView: View {
-    @Bindable var presence: EdgeDockController
+    @Binding var idleSeconds: Double
+    @Binding var peekSeconds: Double
     @State private var memoryMB: Double?
     @State private var peakMB: Double = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            timing("Idle (s)", value: $presence.idleSeconds)
-            timing("Peek (s)", value: $presence.peekSeconds)
+            timing("Idle (s)", value: $idleSeconds)
+            timing("Peek (s)", value: $peekSeconds)
             HStack {
-                Button("Demo 5s") { presence.idleSeconds = 5; presence.peekSeconds = 5 }
-                Button("Production") { presence.idleSeconds = 30; presence.peekSeconds = 300 }
+                Button("Demo 5s") { idleSeconds = 5; peekSeconds = 5 }
+                Button("Production") { idleSeconds = 30; peekSeconds = 300 }
             }.font(.system(size: 11))
             Divider()
             if let memoryMB {
