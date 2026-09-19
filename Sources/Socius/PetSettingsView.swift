@@ -3,7 +3,7 @@ import SwiftUI
 struct PetSettingsView: View {
     @Bindable var model: PetModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Your pet’s name").font(.system(size: 12, weight: .semibold))
                 TextField("Mochi", text: $model.name)
@@ -31,9 +31,18 @@ struct PetSettingsView: View {
                     }
                 }
             }.font(.system(size: 12, weight: .semibold)).tint(Palette.green)
-            Link(destination: URL(string: "https://github.com/nmashchenko/socius/issues/new")!) {
-                Label("Report a bug", systemImage: "ladybug")
-            }.buttonStyle(PocketButtonStyle()).help("Opens GitHub so you can review and submit your report.")
+            HStack {
+                Link(destination: URL(string: "https://github.com/nmashchenko/socius/issues/new")!) {
+                    Label("Report a bug", systemImage: "ladybug")
+                }.help("Opens GitHub so you can review and submit your report.")
+                Spacer()
+                Button { NSApp.terminate(nil) } label: {
+                    Label("Quit Socius", systemImage: "power")
+                }
+            }.buttonStyle(PocketButtonStyle())
+            Text("Quitting closes Socius completely. Open Socius from Applications or Spotlight to bring your pet back.")
+                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
     }

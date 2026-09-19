@@ -89,6 +89,8 @@ Open **Settings** in the pocket or menu bar to name your pet, enable Quiet mode,
 
 Bring the pet to your cursor with **Control–Option–M**. Record another global combination in Settings; shortcut preferences stay on this Mac. Shortcuts require Command, Control or Option, and unavailable combinations show an error.
 
+Choose **Quit Socius** in Settings or the menu bar to close the app completely. Reopen Socius from Applications or Spotlight; your preferences remain saved. The summon shortcut works only while the app is running.
+
 ## Releases
 
 See [release preparation](docs/releasing.md) for signed, notarized DMG builds and [0.1.0 beta notes](docs/releases/0.1.0-beta.1.md). Release scripts keep credentials in Keychain and do not publish automatically.

@@ -193,5 +193,12 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
         }
         petPanel?.orderFrontRegardless()
     }
-    @objc func quit() { hotkey.stop(); edgeDock.stop(); tools.cyclop.stop(); tools.store.stop(); NSApp.terminate(nil) }
+    func applicationWillTerminate(_ notification: Notification) {
+        careClock?.cancel()
+        hotkey.stop()
+        edgeDock.stop()
+        tools.cyclop.stop()
+        tools.store.stop()
+    }
+    @objc func quit() { NSApp.terminate(nil) }
 }
