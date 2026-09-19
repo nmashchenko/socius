@@ -2,6 +2,53 @@ import Testing
 @testable import Socius
 
 @MainActor @Suite struct PetInteractionTests {
+    @Test(arguments: [19.9, 20.0, 20.1])
+    func careThresholdAppliesToBothNeeds(value: Double) {
+        let pet = PetModel()
+        pet.fullness = value
+        #expect(pet.toolsAvailable == (value > 20))
+        pet.fullness = 100
+        pet.happiness = value
+        #expect(pet.toolsAvailable == (value > 20))
+    }
+    @Test func bothLowNeedsRequireBothKindsOfCare() {
+        let pet = PetModel()
+        pet.fullness = 0; pet.happiness = 0
+        #expect(pet.restingMood == .hungry)
+        pet.feed()
+        #expect(pet.moodLabel == "Grumpy")
+        #expect(!pet.toolsAvailable)
+        pet.startShellGame(prize: 1)
+        pet.chooseShell(0)
+        #expect(!pet.toolsAvailable)
+        pet.chooseShell(1)
+        #expect(pet.toolsAvailable)
+        #expect(pet.fullness == 45)
+        #expect(pet.happiness == 45)
+    }
+    @Test func naturalHungerUpdatesSpeechWithoutInterruptingPlay() {
+        let pet = PetModel()
+        pet.fullness = 20.1
+        pet.tick()
+        #expect(pet.mood == .hungry)
+        #expect(pet.speech.contains("snack"))
+        pet.startShellGame(prize: 1)
+        let invitation = pet.speech
+        pet.tick()
+        #expect(pet.shellGameActive)
+        #expect(pet.speech == invitation)
+        #expect(pet.moodLabel == "Hungry")
+    }
+    @Test func sleepCancelsAnInFlightReaction() async throws {
+        let pet = PetModel()
+        pet.pet()
+        pet.sleep()
+        try await Task.sleep(for: .seconds(1))
+        #expect(pet.mood == .sleeping)
+        let needs = pet.careHP
+        pet.tick()
+        #expect(pet.careHP == needs)
+    }
     @Test func lowCareRemainsVisibleDuringAffection() {
         let pet = PetModel()
         pet.preview(.hungry)

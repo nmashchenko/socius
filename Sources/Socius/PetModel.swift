@@ -75,11 +75,17 @@ import Observation
     var careHP: Double { min(fullness, happiness) }
     var moodLabel: String { toolsAvailable ? mood.rawValue : restingMood.rawValue }
     var restingMood: Mood { fullness <= 20 ? .hungry : happiness <= 20 ? .grumpy : .content }
+    private var restingSpeech: String {
+        toolsAvailable ? "All eight arms, ready to help." : fullness <= 20 ? "Still peckish. Got another snack?" : "A little more playtime?"
+    }
     func tick() {
         guard mood != .sleeping else { return }
         fullness = max(0, fullness - 100.0 / (12 * 60))
         happiness = max(0, happiness - 100.0 / (18 * 60))
-        if [.content, .hungry, .grumpy].contains(mood) { mood = restingMood }
+        if [.content, .hungry, .grumpy].contains(mood), !shellGameActive, offering == nil {
+            if mood != restingMood { speech = restingSpeech }
+            mood = restingMood
+        }
         if !toolsAvailable { panelOpen = false }
     }
     func preview(_ state: Mood) {
@@ -102,6 +108,7 @@ import Observation
         resetTask?.cancel()
         offering = nil; shellGameActive = false; panelOpen = false
         mood = restingMood
+        speech = restingSpeech
     }
     func react(_ mood: Mood, _ message: String) {
         resetTask?.cancel()
@@ -113,7 +120,7 @@ import Observation
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 self.mood = self.restingMood
-                self.speech = self.toolsAvailable ? "All eight arms, ready to help." : self.fullness <= 20 ? "Still peckish. Got another snack?" : "A little more playtime?"
+                self.speech = self.restingSpeech
             }
         }
     }

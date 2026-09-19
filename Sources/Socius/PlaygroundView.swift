@@ -20,6 +20,7 @@ struct PlaygroundView: View {
     @State private var model = PetModel()
     @State private var presence = PlaygroundPresence()
     @State private var showingOnboarding = false
+    @State private var simulatingIdle = false
     @State private var selectedTool: PocketTool?
     @State private var petPosition = CGSize.zero
     @GestureState private var drag = CGSize.zero
@@ -58,12 +59,10 @@ struct PlaygroundView: View {
         }
         .task {
             while !Task.isCancelled {
-                presence.tick(held: model.panelOpen || model.shellGameActive || model.offering != nil || [.eating, .playing].contains(model.mood))
+                if simulatingIdle { presence.tick(held: false) }
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             }
         }
-        .onChange(of: model.reaction) { presence.interact() }
-        .onChange(of: model.panelOpen) { _, open in if open { presence.interact() } else { presence.simulateIdle() } }
         .background(Palette.cream)
         .preferredColorScheme(.light)
         .buttonStyle(PocketButtonStyle(compact: true))
@@ -116,16 +115,16 @@ struct PlaygroundView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     sectionLabel("PREVIEW INACTIVITY")
                     HStack {
-                        Button("Go idle now") { presence.simulateIdle() }
+                        Button("Go idle now") { simulatingIdle = true; presence.simulateIdle() }
                             .disabled(presence.phase != .engaged)
-                        Button("Return") { presence.interact() }
+                        Button("Return") { simulatingIdle = false; presence.interact() }
                     }
                     Button("Show reminder") { presence.simulateReminder() }
                         .disabled(![.tucked, .peeking].contains(presence.phase))
                     Text("State: \(String(describing: presence.phase))")
                         .font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.muted)
                     DeveloperRuntimeView(idleSeconds: $presence.idleSeconds, peekSeconds: $presence.peekSeconds)
-                    Text("Preview timings do not change the desktop pet.")
+                    Text("Manual state checks only. The preview stays visible; the desktop pet is unchanged.")
                         .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 }
             }
@@ -198,9 +197,7 @@ struct PlaygroundView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .leading)))
                 }
             }.padding(.horizontal, 24)
-                .offset(x: presence.phase == .tucked ? 300 : presence.phase == .peeking ? 240 : 0)
-                .opacity(presence.phase == .tucked ? 0.25 : 1)
-                .animation(reduceMotion || model.quiet ? nil : .easeInOut(duration: 0.3), value: presence.phase)
+
                 .animation(reduceMotion || model.quiet ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.2), value: model.panelOpen)
         }.frame(height: 380).clipped()
     }
