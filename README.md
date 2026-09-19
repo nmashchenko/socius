@@ -58,7 +58,7 @@ Developer playground includes live process memory footprint (MB, once per second
 open build/Socius.app --args --developer
 ```
 
-After onboarding, the Interaction playground opens automatically in developer mode and is also accessible from the menu-bar paw or Socius’s context menu. Its sidebar has mood presets, neglect, care, idle, and reminder simulations. The playground owns a separate pet and preview timers; care, quiet mode, idle simulations, and onboarding replay do not change the desktop pet. Tool selection is preview-only; use the desktop pocket for live tools. Ordinary launches omit the playground.
+After onboarding, the Interaction playground opens automatically in developer mode and is also accessible from the menu-bar paw or Socius’s context menu. Its sidebar has mood presets, neglect, care, idle, and reminder simulations. The playground owns a separate pet and preview timers; care, quiet mode, idle simulations, and full-screen onboarding replay do not change the desktop pet. Tool selection is preview-only; use the desktop pocket for live tools. Ordinary launches omit the playground.
 
 For a direct tool launch: `open build/Socius.app --args --tool Notes` (quit an already-running instance first). A native preview with disposable sample data can be rendered with `build/Socius.app/Contents/MacOS/Socius --render-preview --tool Notes`.
 

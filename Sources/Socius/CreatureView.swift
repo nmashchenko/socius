@@ -14,6 +14,11 @@ struct PixelProp: View {
             case .heart: [" rr rr ", "rrrrrrr", "rrrrrrr", " rrrrr ", "  rrr  ", "   r   "]
             }
             let unit = floor(min(size.width / 9, size.height / 8))
+            // Shell artwork occupies 8 × 7 pixels inside the shared 9 × 8 grid.
+            // Center the visible sprite, not the grid's trailing empty space.
+            let origin = kind == .shell
+                ? CGPoint(x: floor((size.width - 8 * unit) / 2), y: floor((size.height - 7 * unit) / 2))
+                : .zero
             for (y, row) in rows.enumerated() { for (x, pixel) in row.enumerated() where pixel != " " {
                 if kind == .shrimp && bite > 0 && x > 4 && y < 3 + bite { continue }
                 let color: Color = switch pixel {
@@ -23,7 +28,7 @@ struct PixelProp: View {
                 case "b": Color(red: 0.56, green: 0.66, blue: 0.76)
                 default: Color(red: 0.88, green: 0.40, blue: 0.42)
                 }
-                context.fill(Path(CGRect(x: CGFloat(x) * unit, y: CGFloat(y) * unit, width: unit, height: unit)), with: .color(color), style: FillStyle(antialiased: false))
+                context.fill(Path(CGRect(x: origin.x + CGFloat(x) * unit, y: origin.y + CGFloat(y) * unit, width: unit, height: unit)), with: .color(color), style: FillStyle(antialiased: false))
             } }
         }.accessibilityHidden(true)
     }

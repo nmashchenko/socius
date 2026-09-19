@@ -19,7 +19,7 @@ struct CareButton: View {
 struct PlaygroundView: View {
     @State private var model = PetModel()
     @State private var presence = PlaygroundPresence()
-    @State private var showingOnboarding = false
+    var replayOnboarding: (() -> Void)? = nil
     @State private var simulatingIdle = false
     @State private var selectedTool: PocketTool?
     @State private var petPosition = CGSize.zero
@@ -33,8 +33,8 @@ struct PlaygroundView: View {
             VStack(alignment: .leading, spacing: 24) {
                 Text("Playground").font(.system(size: 28, weight: .medium, design: .serif)).foregroundStyle(Palette.ink)
                 Text("Preview your pet and try its controls.").font(.system(size: 12)).foregroundStyle(Palette.muted)
-                Group {
-                    Button { showingOnboarding = true } label: {
+                if let replayOnboarding {
+                    Button(action: replayOnboarding) {
                         Label("Replay onboarding", systemImage: "arrow.counterclockwise")
                     }
                 }
@@ -52,10 +52,6 @@ struct PlaygroundView: View {
             Button("OK") { selectedTool = nil }
         } message: {
             Text("\(selectedTool?.rawValue ?? "Tool") selected in the preview. Use the desktop pocket for live tools and saved data.")
-        }
-        .sheet(isPresented: $showingOnboarding) {
-            WelcomeView(model: model) { showingOnboarding = false; presence.simulateIdle() }
-                .frame(width: 760, height: 560)
         }
         .task {
             while !Task.isCancelled {
