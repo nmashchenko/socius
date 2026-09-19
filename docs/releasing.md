@@ -22,3 +22,19 @@ If notarization exceeds the 20-minute wait, inspect the saved `.notary.json` sub
 Before publication, smoke-test the installed Developer ID build (onboarding, drag/return, pocket, shortcut, Spotify and permissions), review the release notes, and publish the DMG as a GitHub prerelease. A signing-identity change from a local development build may require granting macOS permissions again.
 
 The app → notarize/staple → DMG → notarize/staple flow follows Cyclop’s release approach and Apple's distribution guidance. See `Vendor/Cyclop/README.md` for source attribution.
+
+## Cyclop-style automation
+
+`Scripts/release.sh` checks the clean working tree, exact agreement with pushed `main`, an unused tag, authored release notes, successful `build.yml` CI for the commit, and signing secret names. It then pushes the version tag. `.github/workflows/release.yml` tests, imports signing credentials into a temporary Keychain, builds and notarizes the app and DMG, checks Gatekeeper, and creates a **draft prerelease** with notes and checksums. Publish the draft after reviewing it. A manual workflow dispatch uploads artifacts only.
+
+GitHub runners cannot access this Mac’s Keychain. Configure these repository Actions secrets locally (never paste them into source files or chat):
+
+- `DEVELOPER_ID_P12`: base64 of the exported Developer ID certificate **and private key**.
+- `DEVELOPER_ID_P12_PASSWORD`: its export password.
+- `NOTARY_KEY_P8`: base64 of an App Store Connect notarization API key.
+- `NOTARY_KEY_ID`: its key ID.
+- `NOTARY_ISSUER_ID`: issuer ID for a team API key; omit for an individual API key.
+
+Local packaging continues to support `NOTARY_PROFILE=socius-notary`; no credential export is necessary for local builds. No secrets are uploaded by these scripts automatically. Secret provisioning and the first hosted run remain setup steps.
+
+Adapted from [Cyclop release.sh](https://github.com/akalikbergenov/cyclop/blob/main/Scripts/release.sh), [release workflow](https://github.com/akalikbergenov/cyclop/blob/main/.github/workflows/release.yml), and its DMG/notarization flow, under the [MIT license retained in this repository](../Vendor/Cyclop/LICENSE). Socius adds its own test suite, a separate beta tag/build number, temporary credential cleanup, and draft-first publication. Unlike Cyclop’s unsigned dry-run fallback, hosted release preparation requires signing credentials even for manual runs.

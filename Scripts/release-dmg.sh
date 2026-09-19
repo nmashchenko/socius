@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source Scripts/release-version
 : "${CODESIGN_IDENTITY:?Set CODESIGN_IDENTITY to your Developer ID Application certificate}"
-: "${NOTARY_PROFILE:?Set NOTARY_PROFILE to your notarytool Keychain profile}"
+[ -n "${NOTARY_PROFILE:-}${NOTARY_KEY_PATH:-}" ] || { echo "Notarization credentials are required."; exit 1; }
 [[ "$CODESIGN_IDENTITY" == "Developer ID Application:"* ]] || { echo "Developer ID Application signing is required."; exit 1; }
 APP="build/release/Socius.app"
 DMG="build/release/Socius-${RELEASE_TAG#v}-arm64.dmg"

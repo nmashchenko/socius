@@ -1,0 +1,31 @@
+name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select Swift 6.2 or newer
+        run: |
+          XCODE=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
+          test -n "$XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          swift --version
+      - name: Tests
+        run: swift test --disable-sandbox
+      - name: Bundle and verify
+        env:
+          CODESIGN_IDENTITY: '-'
+        run: ./Scripts/bundle.sh
+      - name: Launch isolated native preview
+        run: |
+          build/Socius.app/Contents/MacOS/Socius --render-preview --tool Settings
+          test -s build/tool-preview.png

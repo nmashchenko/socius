@@ -6,7 +6,7 @@ swift build -c release --arch arm64 --disable-sandbox
 BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
 APP="${APP_OUTPUT:-build/Socius.app}"
 IDENTITY="${CODESIGN_IDENTITY:-Socius Local Development}"
-if ! security find-certificate -c "$IDENTITY" >/dev/null 2>&1; then
+if [ "$IDENTITY" != "-" ] && ! security find-certificate -c "$IDENTITY" >/dev/null 2>&1; then
     echo "No stable signing identity found. Run bash Scripts/setup-local-signing.sh first."
     exit 1
 fi
