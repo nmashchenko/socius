@@ -13,11 +13,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - name: Select Swift 6.2 or newer
+      - name: Select validated Xcode 26.1.1
         run: |
-          XCODE=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
-          test -n "$XCODE"
-          sudo xcode-select -s "$XCODE/Contents/Developer"
+          # Match the locally validated release toolchain; 26.3 crashes during optimization.
+          sudo xcode-select -s /Applications/Xcode_26.1.1.app/Contents/Developer
           swift --version
       - name: Tests
         run: swift test --disable-sandbox

@@ -214,6 +214,8 @@ struct DesktopPetView: View {
                     if let openStudio {
                         Button("Interaction playground", action: openStudio)
                     }
+                    Divider()
+                    Button("Quit Socius") { NSApp.terminate(nil) }
                 }
             ZStack {
                 Color.clear
