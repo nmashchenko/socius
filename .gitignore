@@ -1,0 +1,17 @@
+.build/
+build/
+.DS_Store
+.swiftpm/
+
+# Local credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.pem
+*.key
+.claude/
+
+# Installed agent skill cache; reproducible from skills-lock.json
+.agents/

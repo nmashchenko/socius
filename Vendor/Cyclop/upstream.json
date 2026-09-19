@@ -1,0 +1,30 @@
+{
+  "repository": "https://github.com/akalikbergenov/cyclop",
+  "revision": "8d9ea04672898f651af2794d9be6289eebc658a1",
+  "sha256": {
+    "Services/Support.swift": "895de7cc534e592b2ca98f5179d4597c6471249da60c39e8a42b70955095657d",
+    "Services/DebouncedWrite.swift": "592322f9e2c9ea63440c01ccb221ca617608706f2c092f6c94e68f2bd02ddfc8",
+    "Services/ConfigStore.swift": "08a03cee6b60f11d297973961f18d220839eaf0493818fc8a32812ab9e5d29bd",
+    "Services/ShelfStore.swift": "58ba92fa77ab3d1d3b85a46b76fee734fab9075d5c80f865f9139fc18a32e771",
+    "Services/SnippetStore.swift": "56b17b8781ba49b10bfe284cb9f76e049db089305150b4c436790dcaef253dbe",
+    "Services/NoteStore.swift": "b3fa6effa7d57a7887056a82912c6fb8072c5dbba22a96d5e1f1a37758fd9c4f",
+    "Services/ClipboardStore.swift": "350cfab52faa2d2d60411da47adccd03e2033545eef6ccf9980d86f400a82ae3",
+    "Services/ScreenshotVault.swift": "5263c432324cc2daafd95f1223447dceaa1581f1c00dfee5ca3da5db0b2b7d17",
+    "Services/ScreenshotFolderWatcher.swift": "1d5fbe26bb823d3edf29d1d79570e44832f2c9ddf9e9dd65a57b08256739ad41",
+    "Services/MediaController.swift": "cad742d93ac272804e61d69545389b812b098133b18793d63920d8b88a3f37d8",
+    "Services/PlayerBridge.swift": "e8c13e9cd517844a6490fbe7ebbd0cf980a5f10d503588a1103843d6f7d68f39",
+    "Services/NowPlayingFeed.swift": "06805a3ccccfc743b83da659f3f637c8f557e2a7718d6c75f2ca7cae439670ca",
+    "UI/Theme.swift": "0bf84a2d370d2adb46da25d939dce2d6821ca9e03a9484ddcda3a10dab5c73cd",
+    "UI/Confirmation.swift": "4187b6ceb31bff9c33c3b9bf74970f78f687a782e08cb5e6c72519db942c0103",
+    "UI/SpoilerField.swift": "4706d56488cb29fdeaaeb41f6c13e97f128e6c0d6ca428aa2b0efefb76986ae3",
+    "UI/Skeleton.swift": "51c3cbd65774ce2ec72d195b16c2b2588b9202e656bea9368ed6a22399179f6b",
+    "UI/ShelfDragSource.swift": "a1f08f364d56ca057d5219a446d2e7e4cd23869c7f15549a0df75221463c60c8",
+    "UI/ShelfPane.swift": "8f30f5ab544778c9550223f9d285ea69acc74a24149a66f8a699b82ffddc6b97",
+    "UI/ClipboardPane.swift": "b7f0cc47992b7f0dd57f14644fa14f70218a427aefa513d6d7e3f5e5641cc9aa",
+    "UI/SnippetsPane.swift": "391a86762684eee790b004b2f164fae7650eaaf7086dd12f9c2cc0c7bbffe717",
+    "UI/NotesPane.swift": "82c79f814457eb074945ca071eb571ba6d1514d7d439257909217a6d9c582a98",
+    "UI/MediaPane.swift": "ce3b06b429f6a00e528de34f5c175ff8647358ff690cd23e8f21ec4cefde888d",
+    "Model/PrivacyMode.swift": "de6738673c39a4db7ebbd5eb66d7085e78cbaab803e2ce04f520ca3bc2462f6f",
+    "App/Strings.swift": "3ece6b85164d2299fc930de2ec08f27fde68e1361732ab6134156b9aebb6faf6"
+  }
+}

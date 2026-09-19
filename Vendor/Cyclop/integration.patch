@@ -1,0 +1,792 @@
+--- upstream/Services/Support.swift
++++ socius/Services/Support.swift
+@@ -8,13 +8,21 @@
+ /// exists. Identical every time, and the kind of thing that stays identical
+ /// only until one copy is edited and the others are not.
+ enum Support {
++    static let isPreview = ProcessInfo.processInfo.arguments.contains("--render-preview")
++        || ProcessInfo.processInfo.arguments.contains(where: { $0.contains(".xctest") })
++        || Bundle.allBundles.contains(where: { $0.bundlePath.hasSuffix(".xctest") })
+     /// The folder itself, created on first use. Repeated calls are cheap —
+     /// `createDirectory` with `withIntermediateDirectories` is content to find
+     /// the folder already there.
+     static let folder: URL = {
+         let fm = FileManager.default
++        if Self.isPreview {
++            let preview = fm.temporaryDirectory.appendingPathComponent("socius-cyclop-preview-\(ProcessInfo.processInfo.processIdentifier)")
++            try? fm.createDirectory(at: preview, withIntermediateDirectories: true)
++            return preview
++        }
+         let url = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+-            .appendingPathComponent("Cyclop", isDirectory: true)
++            .appendingPathComponent("Socius/Cyclop", isDirectory: true)
+         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
+         return url
+     }()
+@@ -33,3 +41,8 @@
+         return url
+     }
+ }
++
++/// Keep native previews and test hosts away from the running app’s preferences.
++@MainActor enum PocketDefaults {
++    static let shared: UserDefaults = Support.isPreview ? UserDefaults(suiteName: "Socius.Preview.\(ProcessInfo.processInfo.processIdentifier)")! : .standard
++}
+--- upstream/Services/ConfigStore.swift
++++ socius/Services/ConfigStore.swift
+@@ -139,7 +139,7 @@
+     /// do, so a Mac with none of these keys set gets the same defaults as
+     /// before and a Mac with some of them set keeps exactly those.
+     private static func migrated() -> File {
+-        let defaults = UserDefaults.standard
++        let defaults = PocketDefaults.shared
+         var file = File()
+         if defaults.object(forKey: "showOnAllDisplays") != nil {
+             file.showOnAllDisplays = defaults.bool(forKey: "showOnAllDisplays")
+--- upstream/Services/ShelfStore.swift
++++ socius/Services/ShelfStore.swift
+@@ -52,7 +52,7 @@
+         // the ids it holds now name nothing. Kept, they showed as a phantom
+         // "Selected: N" in the footer with no card marked (#10).
+         selection.removeAll()
+-        let paths = UserDefaults.standard.stringArray(forKey: defaultsKey) ?? []
++        let paths = PocketDefaults.shared.stringArray(forKey: defaultsKey) ?? []
+         items = paths
+             .map(URL.init(fileURLWithPath:))
+             .map { ShelfItem(url: $0, icon: Self.icon(forName: $0)) }
+@@ -249,6 +249,6 @@
+     }
+ 
+     private func persist() {
+-        UserDefaults.standard.set(items.map(\.url.path), forKey: defaultsKey)
++        PocketDefaults.shared.set(items.map(\.url.path), forKey: defaultsKey)
+     }
+ }
+--- upstream/Services/ScreenshotFolderWatcher.swift
++++ socius/Services/ScreenshotFolderWatcher.swift
+@@ -27,11 +27,11 @@
+     private var seen: Set<String> = []
+ 
+     var isEnabled: Bool {
+-        UserDefaults.standard.bool(forKey: enabledKey)
++        PocketDefaults.shared.bool(forKey: enabledKey)
+     }
+ 
+     var folderPath: String? {
+-        UserDefaults.standard.string(forKey: pathKey)
++        PocketDefaults.shared.string(forKey: pathKey)
+     }
+ 
+     /// Where `screencapture` saves files today — read the same preference it
+@@ -64,8 +64,8 @@
+                 completion(false)
+                 return
+             }
+-            UserDefaults.standard.set(url.path, forKey: self.pathKey)
+-            UserDefaults.standard.set(true, forKey: self.enabledKey)
++            PocketDefaults.shared.set(url.path, forKey: self.pathKey)
++            PocketDefaults.shared.set(true, forKey: self.enabledKey)
+             self.start(at: url)
+             completion(true)
+         }
+@@ -82,8 +82,8 @@
+     /// turning it back on goes through the panel again rather than silently
+     /// resuming access nobody remembers giving.
+     func disable() {
+-        UserDefaults.standard.set(false, forKey: enabledKey)
+-        UserDefaults.standard.removeObject(forKey: pathKey)
++        PocketDefaults.shared.set(false, forKey: enabledKey)
++        PocketDefaults.shared.removeObject(forKey: pathKey)
+         stop()
+     }
+ 
+--- upstream/Services/MediaController.swift
++++ socius/Services/MediaController.swift
+@@ -20,6 +20,39 @@
+     @Published private(set) var duration: TimeInterval = 0
+     @Published private(set) var position: TimeInterval = 0
+     @Published private(set) var sourceName: String?
++    @Published var volume: Double = 0.5
++    @Published private(set) var volumeAvailable = false
++    var volumeLabel: String { "System volume" }
++    init() {
++        if ProcessInfo.processInfo.arguments.contains("--render-preview") {
++            track = Track(title: "Midnight City", artist: "M83", album: "", key: "preview")
++            isPlaying = true; duration = 244; position = 87; volumeAvailable = true
++            artwork = NSImage(size: NSSize(width: 240, height: 240), flipped: false) { rect in
++                NSColor(red: 0.17, green: 0.23, blue: 0.25, alpha: 1).setFill()
++                rect.fill()
++                for index in (0..<7).reversed() {
++                    NSColor(red: 0.6 + Double(index) * 0.04, green: 0.48 + Double(index) * 0.035, blue: 0.36, alpha: 1).setFill()
++                    NSBezierPath(ovalIn: rect.insetBy(dx: CGFloat(index * 13 + 20), dy: CGFloat(index * 13 + 20))).fill()
++                }
++                return true
++            }
++        }
++    }
++    func refreshVolume() {
++        let source = "output volume of (get volume settings)"
++        PlayerBridge.runScript(source) { [weak self] value in
++            guard let self else { return }
++            volumeAvailable = value != nil
++            if let value { volume = min(1, max(0, Double(value.int32Value) / 100)) }
++        }
++    }
++    func commitVolume() {
++        let amount = Int((min(1, max(0, volume)) * 100).rounded())
++        let source = "set volume output volume \(amount)"
++        PlayerBridge.runScript(source) { [weak self] value in
++            if value == nil { self?.refreshVolume() }
++        }
++    }
+     /// Whether the player accepts skipping at all. A browser tab playing one
+     /// video registers no handler for it — the command leaves and nothing
+     /// happens — so the buttons go dim rather than dead, the way the system's
+@@ -67,6 +100,7 @@
+         isActive = active
+         updateTicker()
+         guard active else { return }
++        refreshVolume()
+         tick()
+         if feedAvailable {
+             feed.refresh()
+@@ -129,7 +163,9 @@
+         track = Track(title: snapshot.title, artist: snapshot.artist, album: snapshot.album, key: key)
+         isPlaying = snapshot.isPlaying || snapshot.rate > 0
+         duration = snapshot.duration
++        let sourceChanged = sourceName != snapshot.source
+         sourceName = snapshot.source
++        if sourceChanged && isActive { refreshVolume() }
+         // Both directions travel together: no player has ever offered one
+         // without the other, and two separately dimmed arrows would read as
+         // a glitch rather than a limit.
+--- upstream/UI/Theme.swift
++++ socius/UI/Theme.swift
+@@ -1,6 +1,7 @@
+ import SwiftUI
+ 
+ enum Theme {
++    static let ink = Color(red: 0.23, green: 0.28, blue: 0.24)
+     static let openAnimation = Animation.spring(response: 0.27, dampingFraction: 0.82)
+     static let contentAnimation = Animation.easeOut(duration: 0.16)
+     /// Pane switching: the outgoing pane leaves faster than the incoming one
+@@ -15,11 +16,11 @@
+     static let openTopRadius: CGFloat = 12
+     static let openBottomRadius: CGFloat = 22
+ 
+-    static let secondary = Color.white.opacity(0.55)
+-    static let tertiary = Color.white.opacity(0.32)
+-    static let surface = Color.white.opacity(0.08)
+-    static let surfaceHover = Color.white.opacity(0.14)
+-    static let hairline = Color.white.opacity(0.10)
++    static let secondary = Theme.ink.opacity(0.78)
++    static let tertiary = Theme.ink.opacity(0.62)
++    static let surface = Theme.ink.opacity(0.08)
++    static let surfaceHover = Theme.ink.opacity(0.14)
++    static let hairline = Theme.ink.opacity(0.10)
+ }
+ 
+ /// Flat, focus-free button used for every control in the panel.
+@@ -30,7 +31,7 @@
+     func makeBody(configuration: Configuration) -> some View {
+         configuration.label
+             .font(.system(size: prominent ? 17 : 13, weight: .medium))
+-            .foregroundStyle(.white)
++            .foregroundStyle(Theme.ink)
+             .frame(width: size, height: size)
+             .background(
+                 Circle().fill(prominent ? Theme.surfaceHover : Color.clear)
+--- upstream/UI/SpoilerField.swift
++++ socius/UI/SpoilerField.swift
+@@ -77,7 +77,7 @@
+ 
+         for (index, path) in buckets.enumerated() where !path.isEmpty {
+             let alpha = (Double(index) + 0.5) / Double(steps)
+-            context.fill(path, with: .color(.white.opacity(alpha * 0.85)))
++            context.fill(path, with: .color(Theme.ink.opacity(alpha * 0.65)))
+         }
+     }
+ }
+@@ -109,7 +109,7 @@
+     let text: String
+     let hidden: Bool
+     var font: Font = .system(size: 11)
+-    var color: Color = .white
++    var color: Color = Theme.ink
+     /// Height of the field that stands in for the text, so a covered row is
+     /// exactly as tall as an uncovered one.
+     var height: CGFloat = 12
+@@ -179,7 +179,7 @@
+         } label: {
+             Image(systemName: covering ? "eye.slash.fill" : "eye")
+                 .font(.system(size: 10, weight: .medium))
+-                .foregroundStyle(covering ? Color.white.opacity(0.8) : Theme.secondary)
++                .foregroundStyle(covering ? Theme.ink.opacity(0.8) : Theme.secondary)
+         }
+         .buttonStyle(.plain)
+         // The switch in the snippets tab stands next to the search field, and a
+--- upstream/UI/ShelfPane.swift
++++ socius/UI/ShelfPane.swift
+@@ -39,7 +39,7 @@
+                         }
+                     }
+                     .padding(.horizontal, 2)
+-                    .frame(maxHeight: .infinity)
++                    .frame(maxHeight: .infinity, alignment: .top)
+                 }
+                 .coordinateSpace(name: "shelf")
+                 .onContinuousHover(coordinateSpace: .named("shelf")) { phase in
+@@ -56,7 +56,7 @@
+                     frames = new
+                     rehit()
+                 }
+-                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                 footer
+             }
+         }
+@@ -73,7 +73,7 @@
+     private var dropHint: some View {
+         RoundedRectangle(cornerRadius: 14, style: .continuous)
+             .strokeBorder(
+-                isTargeted ? Color.white.opacity(0.6) : Theme.hairline,
++                isTargeted ? Theme.ink.opacity(0.6) : Theme.hairline,
+                 style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])
+             )
+             .background(
+@@ -83,9 +83,9 @@
+             .overlay(
+                 Image(systemName: "tray.and.arrow.down.fill")
+                     .font(.system(size: 20, weight: .light))
+-                    .foregroundStyle(isTargeted ? .white : Theme.tertiary)
+-            )
+-            .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .foregroundStyle(isTargeted ? Theme.ink : Theme.tertiary)
++            )
++            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+             .animation(Theme.contentAnimation, value: isTargeted)
+     }
+ 
+@@ -150,11 +150,11 @@
+         .frame(width: 86, height: 92)
+         .background(
+             RoundedRectangle(cornerRadius: 12, style: .continuous)
+-                .fill(isSelected ? Color.white.opacity(0.18) : (isHovered ? Theme.surfaceHover : Theme.surface))
++                .fill(isSelected ? Theme.ink.opacity(0.18) : (isHovered ? Theme.surfaceHover : Theme.surface))
+         )
+         .overlay(
+             RoundedRectangle(cornerRadius: 12, style: .continuous)
+-                .strokeBorder(Color.white.opacity(isSelected ? 0.55 : 0), lineWidth: 1.5)
++                .strokeBorder(Theme.ink.opacity(isSelected ? 0.55 : 0), lineWidth: 1.5)
+                 .allowsHitTesting(false)
+         )
+         // Owns clicks and drags: a group drag needs one dragging item per file,
+@@ -171,7 +171,7 @@
+             if isSelected {
+                 Image(systemName: "checkmark.circle.fill")
+                     .font(.system(size: 12))
+-                    .foregroundStyle(.white)
++                    .foregroundStyle(Theme.ink)
+                     .padding(4)
+                     .allowsHitTesting(false)
+             }
+@@ -181,7 +181,7 @@
+                 Button { shelf.remove(item) } label: {
+                     Image(systemName: "xmark.circle.fill")
+                         .font(.system(size: 13))
+-                        .foregroundStyle(Color.white.opacity(0.75))
++                        .foregroundStyle(Theme.ink.opacity(0.75))
+                 }
+                 .buttonStyle(.plain)
+                 .padding(4)
+--- upstream/UI/SnippetsPane.swift
++++ socius/UI/SnippetsPane.swift
+@@ -11,17 +11,16 @@
+     private enum Field { case search, label, text }
+ 
+     @FocusState private var focused: Field?
+-    @State private var isAdding = false
++    @State private var isAdding = ProcessInfo.processInfo.arguments.contains("--snippet-editor")
+     @State private var draftLabel = ""
+     @State private var draftText = ""
+ 
+     var body: some View {
+-        VStack(spacing: 6) {
++        VStack(spacing: 10) {
+             if isAdding { editor } else { search }
+             if snippets.fileBroken { brokenNotice }
+             list
+         }
+-        .padding(.top, 2)
+         .onChange(of: wantsKeyboard) { _, wants in
+             guard !wants else {
+                 focused = isAdding ? .text : .search
+@@ -42,7 +41,7 @@
+             TextField("", text: $snippets.query)
+                 .textFieldStyle(.plain)
+                 .font(.system(size: 11))
+-                .foregroundStyle(.white)
++                .foregroundStyle(Theme.ink)
+                 .tint(Theme.secondary)
+                 .focused($focused, equals: .search)
+                 .onKeyPress(.escape) {
+@@ -106,60 +105,42 @@
+     /// is two rows tall in a panel that never resizes, and one of the two is
+     /// the list.
+     private var editor: some View {
+-        HStack(spacing: 6) {
+-            // Each field on its own surface. A hairline between them read as a
+-            // caret sitting in the wrong place — exactly where one is expected,
+-            // which is the worst place for something that only looks like one.
+-            TextField(localized("Name"), text: $draftLabel)
+-                .textFieldStyle(.plain)
+-                .font(.system(size: 11, weight: .medium))
+-                .foregroundStyle(.white)
+-                .tint(Theme.secondary)
+-                .padding(.horizontal, 7)
+-                .frame(width: 104, height: 20)
+-                .background(
+-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+-                        .fill(Theme.surface)
+-                )
+-                .focused($focused, equals: .label)
+-                .onSubmit { commit() }
+-
+-            TextField(localized("Text"), text: $draftText)
+-                .textFieldStyle(.plain)
+-                .font(.system(size: 11))
+-                .foregroundStyle(.white)
+-                .tint(Theme.secondary)
+-                .padding(.horizontal, 7)
+-                .frame(height: 20)
+-                .background(
+-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+-                        .fill(Theme.surface)
+-                )
+-                .focused($focused, equals: .text)
+-                .onSubmit { commit() }
++        HStack(spacing: 4) {
++            SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focused == .label,
++                             onFocus: { focused = .label }, submit: commit)
++                .frame(width: 92, height: 30)
++
++            SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focused == .text,
++                             onFocus: { focused = .text }, submit: commit)
++                .frame(height: 32)
+ 
+             Button { commit() } label: {
+                 Image(systemName: "checkmark")
+                     .font(.system(size: 10, weight: .semibold))
+-                    .foregroundStyle(draftText.isEmpty ? Theme.tertiary : Color.green)
++                    .foregroundStyle(draftText.isEmpty ? Theme.tertiary : Theme.ink)
++                    .frame(width: 28, height: 30)
++                    .contentShape(Rectangle())
+             }
+             .buttonStyle(.plain)
+             .pointerStyle(.default)
+-            .disabled(draftText.isEmpty)
++            .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
++            .accessibilityLabel("Save snippet")
+ 
+             Button { cancelAdding() } label: {
+                 Image(systemName: "xmark")
+                     .font(.system(size: 9, weight: .semibold))
+                     .foregroundStyle(Theme.secondary)
++                    .frame(width: 28, height: 30)
++                    .contentShape(Rectangle())
+             }
+             .buttonStyle(.plain)
+             .pointerStyle(.default)
+         }
+-        .padding(.horizontal, 6)
+-        .frame(height: 28)
++        .padding(.horizontal, 4)
++        .frame(height: 34)
+         .background(
+             RoundedRectangle(cornerRadius: 7, style: .continuous)
+-                .fill(Theme.surfaceHover)
++                .fill(Theme.ink.opacity(0.065))
+         )
+         // Asked for here rather than where the editor is switched on: at that
+         // moment this field does not exist yet, and a focus request aimed at a
+@@ -270,7 +251,7 @@
+             if !editing {
+                 Image(systemName: justCopied ? "checkmark" : item.symbol)
+                 .font(.system(size: 10, weight: .medium))
+-                    .foregroundStyle(justCopied ? Color.green : Theme.tertiary)
++                    .foregroundStyle(justCopied ? Theme.ink : Theme.tertiary)
+                     .frame(width: 14)
+             }
+             // The name stays legible while the value is covered: the row has to
+@@ -283,38 +264,22 @@
+                 // edited and a row being created are the same act, and looking
+                 // alike is the whole of saying so. Bare fields inside the row
+                 // read as text that had lost its alignment.
+-                TextField(localized("Name"), text: $draftLabel)
+-                    .textFieldStyle(.plain)
+-                    .font(.system(size: 11, weight: .medium))
+-                    .foregroundStyle(.white)
+-                    .tint(Theme.secondary)
+-                    .padding(.horizontal, 7)
+-                    .frame(width: 104, height: 20)
+-                    .background(
+-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+-                            .fill(Theme.surface)
+-                    )
+-                    .focused($focus, equals: .label)
+-                    .onSubmit { commit() }
+-
+-                TextField(localized("Text"), text: $draftText)
+-                    .textFieldStyle(.plain)
+-                    .font(.system(size: 11))
+-                    .foregroundStyle(.white)
+-                    .tint(Theme.secondary)
+-                    .padding(.horizontal, 7)
+-                    .frame(height: 20)
+-                    .background(
+-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+-                            .fill(Theme.surface)
+-                    )
+-                    .focused($focus, equals: .text)
+-                    .onSubmit { commit() }
++                SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focus == .label,
++                             onFocus: { focus = .label }, submit: commit)
++                .frame(width: 92, height: 28)
++                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
++                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .label ? 0.35 : 0.1), lineWidth: 1))
++
++                SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focus == .text,
++                             onFocus: { focus = .text }, submit: commit)
++                .frame(height: 32)
++                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
++                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
+ 
+                 Button { commit() } label: {
+                     Image(systemName: "checkmark")
+                         .font(.system(size: 10, weight: .semibold))
+-                        .foregroundStyle(draftText.isEmpty ? Theme.tertiary : Color.green)
++                        .foregroundStyle(draftText.isEmpty ? Theme.tertiary : Theme.ink)
+                 }
+                 .buttonStyle(.plain)
+                 .disabled(draftText.isEmpty)
+@@ -329,14 +294,14 @@
+                 if !item.label.isEmpty {
+                     Text(item.label)
+                         .font(.system(size: 11, weight: .medium))
+-                        .foregroundStyle(.white)
++                        .foregroundStyle(Theme.ink)
+                         .lineLimit(1)
+                         .layoutPriority(1)
+                 }
+                 SpoilerText(
+                     text: item.text.replacingOccurrences(of: "\n", with: " "),
+                     hidden: hidden,
+-                    color: item.label.isEmpty ? .white : Theme.secondary,
++                    color: item.label.isEmpty ? Theme.ink : Theme.secondary,
+                     seed: UInt64(bitPattern: Int64(item.id.hashValue))
+                 )
+             }
+@@ -379,7 +344,7 @@
+             }
+         }
+         .padding(.horizontal, editing ? 6 : 9)
+-        .frame(height: editing ? 28 : 26)
++        .frame(height: editing ? 44 : 32)
+         .background(
+             RoundedRectangle(cornerRadius: 7, style: .continuous)
+                 .fill(editing || hovering ? Theme.surfaceHover : Theme.surface)
+--- upstream/UI/NotesPane.swift
++++ socius/UI/NotesPane.swift
+@@ -53,7 +53,7 @@
+                 Button { privacy.reveal("note.\(id)") } label: {
+                     Image(systemName: "eye")
+                         .font(.system(size: 13, weight: .medium))
+-                        .foregroundStyle(.white)
++                        .foregroundStyle(Theme.ink)
+                         .frame(width: 30, height: 30)
+                         .background(Circle().fill(Color.black.opacity(0.65)))
+                 }
+@@ -146,53 +146,11 @@
+     }
+ 
+     private var editor: some View {
++        VStack(spacing: 8) {
+         ZStack(alignment: .topLeading) {
+-            TextEditor(text: editorBinding)
+-                .textEditorStyle(.plain)
+-                .scrollContentBackground(.hidden)
+-                .scrollIndicators(.hidden)
+-                .font(.system(size: 12.5))
+-                .foregroundStyle(.white)
+-                .tint(Theme.secondary)
+-                .focused($focused)
+-                // The editor insets its text by a few points of its own; pull
+-                // that back so the first character lines up with the padding.
+-                .padding(.leading, -5)
+-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+-                // One editor for all notes, deliberately NOT remounted per
+-                // note. A remount (`.id(selected)`) tears the focused view
+-                // down, and SwiftUI's cleanup for "the focused view
+-                // disappeared" clears the FocusState at a moment of its own
+-                // choosing — racing, and regularly beating, every way of
+-                // re-requesting focus: a plain set, a deferred set, even
+-                // `defaultFocus`. All three were tried; the new note kept
+-                // arriving without a caret. With one long-lived editor the
+-                // text swaps inside a view that never dies, so there is no
+-                // cleanup and nothing to race. AppKit clamps the caret to the
+-                // new text's length — for a fresh note that is position zero,
+-                // exactly where it belongs.
+-                //
+-                // A shared undo stack looked like the price of this, but
+-                // measurement says otherwise: ⌘Z undoes typing fine within a
+-                // note, and after switching notes the old actions are simply
+-                // inert — deleted text does not resurface in the neighbour,
+-                // in either note, on any press. The programmatic text swap
+-                // leaves the stale actions unable to apply. Verified by
+-                // driving the real app: type, delete, switch, ⌘Z twice,
+-                // read the store after each step.
+-                //
+-                // Asked in onAppear because on arrival at the tab the request
+-                // must come from a view that exists (see SnippetsPane).
+-                .onAppear {
+-                    DispatchQueue.main.async { focused = wantsKeyboard }
+-                }
+-                .onKeyPress(.escape) {
+-                    // Esc hands the keyboard back, and only that. It never
+-                    // clears: this pane holds the one kind of text that cannot
+-                    // be re-derived from anywhere.
+-                    wantsKeyboard = false
+-                    return .handled
+-                }
++            PocketNoteEditor(text: editorBinding, noteID: notes.selected,
++                             wantsKeyboard: $wantsKeyboard, editable: !selectedHidden)
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
+ 
+             if currentText.isEmpty {
+                 Text("Jot something down…")
+@@ -216,9 +174,13 @@
+         // Above the curtain on purpose: a covered note still copies, the same
+         // way a covered row in the other tabs does. Using what is hidden must
+         // not require showing it first.
+-        .overlay(alignment: .topTrailing) {
+             if !currentText.isEmpty {
+-                CopyNoteButton(text: currentText)
++                HStack(spacing: 6) {
++                    Spacer()
++                    CopyNoteButton(text: currentText)
++                        .background(Theme.surfaceHover, in: RoundedRectangle(cornerRadius: 7))
++                        .accessibilityLabel("Copy note")
++                }
+             }
+         }
+         .padding(10)
+@@ -273,7 +235,7 @@
+             } else {
+                 Text(preview)
+                     .font(.system(size: 11, weight: isSelected ? .medium : .regular))
+-                    .foregroundStyle(isSelected ? .white : Theme.secondary)
++                    .foregroundStyle(isSelected ? Theme.ink : Theme.secondary)
+                     .lineLimit(1)
+                     .truncationMode(.tail)
+             }
+@@ -316,12 +278,18 @@
+ 
+ private struct CopyNoteButton: View {
+     let text: String
++    @State private var copied = false
+ 
+     var body: some View {
+-        CopyButton {
++        Button {
+             let pasteboard = NSPasteboard.general
+             pasteboard.clearContents()
+             pasteboard.setString(text, forType: .string)
+-        }
++            flash($copied)
++        } label: {
++            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
++                .font(.system(size: 10, weight: .medium))
++                .frame(width: 68, height: 28).contentShape(Rectangle())
++        }.buttonStyle(.plain).foregroundStyle(Theme.ink)
+     }
+ }
+--- upstream/UI/MediaPane.swift
++++ socius/UI/MediaPane.swift
+@@ -3,7 +3,9 @@
+ struct MediaPane: View {
+     @ObservedObject var media: MediaController
+ 
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+     @State private var scrubHover = false
++    @State private var volumeOpen = false
+     /// Set while dragging, so the bar follows the finger instead of the clock.
+     @State private var scrubbing: Double?
+ 
+@@ -13,30 +15,28 @@
+ 
+     var body: some View {
+         if let track = media.track {
+-            HStack(spacing: 18) {
+-                artwork(for: track)
+-                VStack(alignment: .leading, spacing: 0) {
+-                    Text(track.title)
+-                        .font(.system(size: 16, weight: .semibold))
+-                        .foregroundStyle(.white)
+-                        .lineLimit(1)
+-                    Text(subtitle(for: track))
+-                        .font(.system(size: 11.5))
+-                        .foregroundStyle(Theme.secondary)
+-                        .lineLimit(1)
+-                        .padding(.top, 3)
+-
+-                    Spacer(minLength: 6)
+-                    controls
+-                    Spacer(minLength: 6)
+-                    scrubber
++            VStack(spacing: 16) {
++                HStack(spacing: 18) {
++                    artwork(for: track)
++                    VStack(alignment: .leading, spacing: 7) {
++                        HStack(spacing: 6) {
++                            PlaybackIndicator(playing: media.isPlaying)
++                            Text(media.isPlaying ? "NOW PLAYING" : "PAUSED")
++                                .font(.system(size: 9, weight: .semibold)).tracking(1.2)
++                        }.foregroundStyle(Theme.secondary)
++                        Text(track.title)
++                            .font(.system(size: 21, weight: .semibold, design: .serif))
++                            .foregroundStyle(Theme.ink).lineLimit(2)
++                        Text(subtitle(for: track))
++                            .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(1)
++                        Spacer(minLength: 4)
++                        controls
++                    }.frame(height: blockHeight, alignment: .leading)
+                 }
+-                .frame(height: blockHeight)
++                scrubber
++
+             }
+             .frame(maxWidth: .infinity, maxHeight: .infinity)
+-            // Title and artist arrive together, so the whole column can cross-
+-            // fade as one unit when the track changes.
+-            .animation(Theme.artworkAnimation, value: track.key)
+         } else {
+             emptyState
+         }
+@@ -91,8 +91,10 @@
+             RoundedRectangle(cornerRadius: 14, style: .continuous)
+                 .strokeBorder(Theme.hairline, lineWidth: 1)
+         )
+-        .shadow(color: .black.opacity(0.5), radius: 12, y: 5)
+-        .animation(Theme.artworkAnimation, value: media.artwork)
++        .shadow(color: Theme.ink.opacity(0.16), radius: 9, y: 4)
++        .scaleEffect(media.isPlaying ? 1 : 0.96)
++        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: media.isPlaying)
++        .animation(reduceMotion ? nil : Theme.artworkAnimation, value: media.artwork)
+     }
+ 
+     // MARK: - Scrubber
+@@ -119,7 +121,7 @@
+                     // cursor at once. Smoothness comes from the tick rate
+                     // instead, which keeps each step well under a pixel.
+                     Capsule()
+-                        .fill(Color.white.opacity(0.9))
++                        .fill(Theme.ink.opacity(0.9))
+                         .frame(width: filled, height: height)
+                     if scrubHover {
+                         Circle()
+@@ -167,22 +169,44 @@
+     /// looks live and does nothing says "broken". The system's own Now Playing
+     /// widget dims the same two arrows on the same session.
+     private var controls: some View {
+-        HStack(spacing: 20) {
++        HStack(spacing: 12) {
++            if volumeOpen {
++                VStack(alignment: .leading, spacing: 2) {
++                    Text("System volume · \(Int(media.volume * 100))%")
++                        .font(.system(size: 10)).foregroundStyle(Theme.secondary)
++                    Slider(value: $media.volume, in: 0...1) { editing in
++                        if !editing { media.commitVolume() }
++                    }.disabled(!media.volumeAvailable).controlSize(.small)
++                        .accessibilityLabel("System volume").tint(Theme.ink)
++                }.frame(height: 42)
++            } else {
++
+             Button { media.previous() } label: { Image(systemName: "backward.fill") }
+-                .buttonStyle(NotchButtonStyle(size: 30))
++                .buttonStyle(MusicControlStyle(prominent: false))
+                 .disabled(!media.canSkip)
+                 .opacity(media.canSkip ? 1 : 0.35)
+             Button { media.togglePlayPause() } label: {
+                 Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+             }
+-            .buttonStyle(NotchButtonStyle(size: 40, prominent: true))
++            .contentTransition(.symbolEffect(.replace))
++            .buttonStyle(MusicControlStyle(prominent: true))
++            .accessibilityLabel(media.isPlaying ? "Pause" : "Play")
+             Button { media.next() } label: { Image(systemName: "forward.fill") }
+-                .buttonStyle(NotchButtonStyle(size: 30))
++                .buttonStyle(MusicControlStyle(prominent: false))
+                 .disabled(!media.canSkip)
+                 .opacity(media.canSkip ? 1 : 0.35)
+-        }
+-        .frame(maxWidth: .infinity)
+-        .animation(.easeInOut(duration: 0.15), value: media.canSkip)
++            }
++            Spacer(minLength: 0)
++            Button { volumeOpen.toggle(); media.refreshVolume() } label: {
++                Image(systemName: volumeOpen ? "checkmark" : media.volume == 0 ? "speaker.slash" : "speaker.wave.2")
++            }
++            .buttonStyle(MusicControlStyle(prominent: false))
++            .accessibilityLabel("System volume")
++            .help("System volume")
++
++        }
++        .frame(maxWidth: .infinity, alignment: .leading)
++        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: media.canSkip)
+     }
+ 
+     private var emptyState: some View {
+@@ -199,3 +223,43 @@
+         .frame(maxWidth: .infinity, maxHeight: .infinity)
+     }
+ }
++
++/// A playback status glyph, not a sampled audio waveform.
++private struct PlaybackIndicator: View {
++    let playing: Bool
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    @State private var pulse = false
++    var body: some View {
++        HStack(spacing: 2) {
++            ForEach(0..<4) { index in
++                Capsule().frame(width: 2, height: 12)
++                    .scaleEffect(y: playing && !reduceMotion ? (pulse ? [0.4, 1.0, 0.6, 0.85][index] : [0.9, 0.4, 1.0, 0.3][index]) : 0.35)
++            }
++        }.frame(width: 14, height: 12).accessibilityHidden(true)
++            .onAppear { update() }
++            .onChange(of: playing) { update() }
++            .onChange(of: reduceMotion) { update() }
++    }
++    private func update() {
++        withAnimation(nil) { pulse = false }
++        if playing && !reduceMotion {
++            withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) { pulse = true }
++        }
++    }
++}
++
++private struct MusicControlStyle: ButtonStyle {
++    var prominent: Bool
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    func makeBody(configuration: Configuration) -> some View {
++        configuration.label
++            .font(.system(size: prominent ? 16 : 13, weight: .semibold))
++            .foregroundStyle(prominent ? Color(red: 0.98, green: 0.97, blue: 0.93) : Theme.ink)
++            .frame(width: prominent ? 42 : 32, height: prominent ? 42 : 32)
++            .background(prominent ? Theme.ink : Theme.ink.opacity(configuration.isPressed ? 0.1 : 0.04), in: Circle())
++            .contentShape(Circle())
++            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
++            .opacity(configuration.isPressed ? 0.85 : 1)
++            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
++    }
++}
