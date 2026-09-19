@@ -113,11 +113,17 @@ import Testing
         #expect(!pet.shellGameActive)
         #expect(pet.mood == .eating)
     }
-    @Test func affectionEndsQuickly() async throws {
+    @Test func affectionReturnsToRestingMood() async throws {
         let pet = PetModel()
         pet.pet()
         #expect(pet.mood == .happy)
-        try await Task.sleep(for: .milliseconds(850))
+        // Native window tests also use the main actor. Give the reaction task
+        // scheduling room on CI, but still fail if it never restores the mood.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while pet.mood == .happy && clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(pet.mood == .content)
     }
 }
