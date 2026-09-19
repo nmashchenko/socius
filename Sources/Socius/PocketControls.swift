@@ -16,25 +16,6 @@ struct PocketButtonStyle: ButtonStyle {
     }
 }
 
-struct PocketSearchField: View {
-    let placeholder: String
-    @Binding var text: String
-    @FocusState private var focused: Bool
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "magnifyingglass").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.muted)
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain).font(.system(size: 12)).focused($focused)
-            if !text.isEmpty {
-                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.muted) }
-                    .buttonStyle(.plain).accessibilityLabel("Clear search")
-            }
-        }.padding(.horizontal, 12).frame(height: 36)
-            .background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 11))
-            .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Palette.green.opacity(focused ? 0.55 : 0.12), lineWidth: 1))
-    }
-}
-
 struct PocketToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button { configuration.isOn.toggle() } label: {

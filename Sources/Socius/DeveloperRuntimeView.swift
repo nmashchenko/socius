@@ -7,8 +7,8 @@ struct DeveloperRuntimeView: View {
     @State private var peakMB: Double = 0
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            timing("Idle seconds", value: $presence.idleSeconds)
-            timing("Peek seconds", value: $presence.peekSeconds)
+            timing("Idle (s)", value: $presence.idleSeconds)
+            timing("Peek (s)", value: $presence.peekSeconds)
             HStack {
                 Button("Demo 5s") { presence.idleSeconds = 5; presence.peekSeconds = 5 }
                 Button("Production") { presence.idleSeconds = 30; presence.peekSeconds = 300 }
@@ -33,8 +33,14 @@ struct DeveloperRuntimeView: View {
             Text(label)
             Spacer()
             TextField(label, value: value, format: .number.precision(.fractionLength(0)))
-                .labelsHidden().frame(width: 55).textFieldStyle(.roundedBorder)
-            Stepper(label, value: value, in: 1...3600, step: 1).labelsHidden()
+                .labelsHidden().frame(width: 45).textFieldStyle(.plain)
+                .padding(7).background(Palette.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            HStack(spacing: 2) {
+                Button { value.wrappedValue = max(1, value.wrappedValue - 1) } label: { Image(systemName: "minus") }
+                    .accessibilityLabel("Decrease \(label)")
+                Button { value.wrappedValue = min(3600, value.wrappedValue + 1) } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("Increase \(label)")
+            }.buttonStyle(PocketButtonStyle(compact: true))
         }
     }
     static func memoryFootprint() -> Double? {

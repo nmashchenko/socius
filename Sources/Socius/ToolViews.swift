@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import ImageIO
 import CyclopTools
 import Combine
 
@@ -11,6 +10,7 @@ import Combine
     var pocketHomeHeight: CGFloat = 310
     var toolHeight: CGFloat {
         switch selected {
+        case .settings: 450
         case .music: 280
         case .shelf: 260
         case .clipboard, .snippets: 290
@@ -22,7 +22,6 @@ import Combine
         }
     }
     let store: ToolStore
-    let spotify = SpotifyService()
     let layouts = WindowLayoutService()
     @ObservationIgnored private var pickerObservation: AnyCancellable?
     @ObservationIgnored lazy var cyclop: CyclopPocket = {
@@ -39,7 +38,7 @@ import Combine
 /// The detail page lives inside the pet's existing anchored popover.
 struct PocketToolView: View {
     @Bindable var hub: ToolHub
-    let pet: PetPrototype
+    let pet: PetModel
     let back: () -> Void
     let close: () -> Void
     var body: some View {
@@ -51,14 +50,14 @@ struct PocketToolView: View {
                 Label(hub.selected.rawValue, systemImage: hub.selected.icon)
                     .font(.system(size: 18, weight: .medium, design: .serif))
                 Spacer()
-                Button(action: close) { Image(systemName: "xmark").frame(width: 24, height: 28) }
+                Button(action: close) { Image(systemName: "xmark").frame(width: 36, height: 36).contentShape(Rectangle()) }
                     .buttonStyle(.plain).accessibilityLabel("Close pocket")
             }
             Divider().opacity(0.4)
             if let error = hub.store.loadError {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
-            if pet.toolsAvailable {
+            if pet.toolsAvailable || hub.selected == .settings {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 VStack(alignment: .leading, spacing: 18) {
@@ -84,6 +83,7 @@ struct PocketToolView: View {
         switch hub.selected {
         case .shelf, .clipboard, .snippets, .notes, .music:
             CyclopPocketPane(pocket: hub.cyclop, tool: hub.selected.rawValue).id(hub.selected)
+        case .settings: PetSettingsView(model: pet)
         case .usage: UsageToolView(service: hub.usage)
         case .layouts: LayoutToolView(store: hub.store, service: hub.layouts)
         }

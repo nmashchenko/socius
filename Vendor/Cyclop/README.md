@@ -21,7 +21,7 @@ Shared theme, privacy controls, copy feedback, localization helpers, and skeleto
 - Support files live in `~/Library/Application Support/Socius/Cyclop`. Preferences use Socius’s app domain. Tests and native previews use isolated data/preferences.
 - The adapter adds Add files and Watch screenshots entry points, a clipboard pause switch, and file-picker suspension of the floating pocket. The core Shelf supports grouped selection and external dragging; clipboard images are saved into its screenshot vault, as in Cyclop.
 - Existing Socius snippets, notes, Shelf references, watcher folder, and clipboard preference import once. Original `tools.json` is retained. Layouts remain in that original file.
-- Music follows Cyclop’s system Now Playing behavior, including its helper and local-player fallback, instead of the previous Spotify-only connection screen. Its private MediaRemote implementation is inherited upstream and may need maintenance with macOS releases.
+- Music currently accepts Spotify Desktop sessions only. Browser and other player support are deferred. It reuses Cyclop’s helper and Spotify scripting fallback. Its private MediaRemote implementation is inherited upstream and may need maintenance with macOS releases.
 - Usage and window layouts are Socius code; Cyclop has neither tool. Pet care, gating, idle travel, and the pocket host are Socius code.
 
 ## Verification

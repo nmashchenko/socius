@@ -1,7 +1,7 @@
 import SwiftUI
 import Observation
 
-@Observable final class PetPrototype {
+@Observable final class PetModel {
     enum Mood: String, CaseIterable {
         case content = "Feeling good", happy = "Happy", eating = "Snacking", playing = "Playing", sleeping = "Sleeping", hungry = "Hungry", grumpy = "Grumpy"
     }
@@ -49,7 +49,26 @@ import Observation
             emptyShells.insert(index); speech = "Just sand! Try another shell."
         }
     }
-    var quiet = false
+    private let preferences: UserDefaults?
+    var name = "Mochi" { didSet { preferences?.set(name, forKey: "petName") } }
+    var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Mochi" : name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    @ObservationIgnored var shortcutChanged: (() -> Void)?
+    var shortcutError: String?
+    var shortcut = PetShortcut() { didSet {
+        if let data = try? JSONEncoder().encode(shortcut) { preferences?.set(data, forKey: "petShortcut") }
+        shortcutChanged?()
+    } }
+    var hiddenTools: Set<String> = [] { didSet { preferences?.set(Array(hiddenTools).sorted(), forKey: "hiddenTools") } }
+    func showsTool(_ tool: String) -> Bool { tool == "Settings" || !hiddenTools.contains(tool) }
+    var quiet = false { didSet { preferences?.set(quiet, forKey: "quietMode") } }
+    init(preferences: UserDefaults? = nil) {
+        self.preferences = preferences
+        name = preferences?.string(forKey: "petName") ?? "Mochi"
+        quiet = preferences?.bool(forKey: "quietMode") ?? false
+        hiddenTools = Set(preferences?.stringArray(forKey: "hiddenTools") ?? [])
+        if let data = preferences?.data(forKey: "petShortcut"), let saved = try? JSONDecoder().decode(PetShortcut.self, from: data) { shortcut = saved }
+        speech = "Hi, I’m \(displayName). A little company for your desktop."
+    }
     var fullness = 75.0
     var happiness = 80.0
     var toolsAvailable: Bool { fullness > 20 && happiness > 20 }
@@ -79,6 +98,11 @@ import Observation
     }
     private var resetTask: Task<Void, Never>?
 
+    func cancelActivity() {
+        resetTask?.cancel()
+        offering = nil; shellGameActive = false; panelOpen = false
+        mood = restingMood
+    }
     func react(_ mood: Mood, _ message: String) {
         resetTask?.cancel()
         offering = nil; shellGameActive = false

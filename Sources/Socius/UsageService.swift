@@ -95,9 +95,6 @@ enum CodexUsageClient {
     private(set) var codexLoading = false
     private(set) var claudeLoading = false
     var busy: Bool { codexLoading || claudeLoading }
-    private(set) var claudeConnected: Bool
-    private var hasClaudeAccountSnapshot = false
-    private(set) var claudeNeedsAuthorization = false
     private var claudeExecutable: URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return [home + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
@@ -119,7 +116,6 @@ enum CodexUsageClient {
         do {
             let windows = try await ClaudeCLIUsage.read(executable: executable,
                 directory: directory.appendingPathComponent("UsageCLI"))
-            hasClaudeAccountSnapshot = true
             claude = ProviderUsage(windows: windows.map {
                 UsageWindow(id: $0.name, name: $0.name, used: $0.used, resetsAt: nil, resetDescription: $0.reset)
             }, updatedAt: Date(), message: "From Claude CLI /usage · account limits across models")
@@ -137,15 +133,12 @@ enum CodexUsageClient {
             let data = try await ClaudeAccountUsage.read(allowAuthorization: true)
             let windows = try UsageParser.claudeAccount(data)
             guard !windows.isEmpty else { throw ToolError.message("Claude did not return allowances.") }
-            hasClaudeAccountSnapshot = true
             claude = ProviderUsage(windows: windows, updatedAt: Date(), message: "One-time account sync · token not retained")
         } catch { claude.message = error.localizedDescription }
     }
-    private var nextClaudeRefresh = Date.distantPast
     let directory: URL
     init(directory: URL) {
         self.directory = directory
-        claudeConnected = FileManager.default.fileExists(atPath: directory.appendingPathComponent("claude-bridge.json").path)
     }
     func loadCodex(force: Bool = true) async {
         if !force, !codex.windows.isEmpty, let updated = codex.updatedAt, Date().timeIntervalSince(updated) < 60 { return }
@@ -161,32 +154,7 @@ enum CodexUsageClient {
             codex.message = codex.windows.isEmpty ? "No subscription limits returned for this account." : "From your signed-in Codex account"
         } catch { codex.message = error.localizedDescription }
     }
-    func readClaude() {
-        guard !hasClaudeAccountSnapshot, Date() >= nextClaudeRefresh else { return }
-        let url = directory.appendingPathComponent("claude-usage.json")
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        do {
-            claude.windows = try UsageParser.claude(Data(contentsOf: url))
-            claude.updatedAt = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            claude.message = claude.windows.isEmpty ? "Claude hasn't supplied account limits yet. Send a message in Claude Code." : "Claude Code session snapshot · may lag behind account usage"
-        } catch { claude.message = "Could not read the last Claude update: \(error.localizedDescription)" }
-    }
-    func connectClaude() {
-        do {
-            try ClaudeUsageBridge.install(directory: directory)
-            claudeConnected = true
-            claude.message = "Connected. Use Claude Code to receive your first update. Your existing status line is preserved."
-        } catch { claude.message = error.localizedDescription }
-    }
-    func disconnectClaude() {
-        do {
-            try ClaudeUsageBridge.uninstall(directory: directory)
-            claudeConnected = false
-            hasClaudeAccountSnapshot = false
-            nextClaudeRefresh = .distantPast
-            claude = ProviderUsage(message: "Disconnected. Your previous status line is restored.")
-        } catch { claude.message = error.localizedDescription }
-    }
+
 }
 
 enum ClaudeUsageBridge {

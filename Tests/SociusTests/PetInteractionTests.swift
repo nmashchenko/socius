@@ -3,7 +3,7 @@ import Testing
 
 @MainActor @Suite struct PetInteractionTests {
     @Test func lowCareRemainsVisibleDuringAffection() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.preview(.hungry)
         pet.pet()
         #expect(pet.mood == .happy)
@@ -15,7 +15,7 @@ import Testing
         #expect(pet.careHP == min(pet.fullness, pet.happiness))
     }
     @Test func hungryPetRefusesToolsUntilFed() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.preview(.hungry)
         pet.openPocket()
         #expect(!pet.panelOpen)
@@ -26,7 +26,7 @@ import Testing
         #expect(pet.toolsAvailable)
     }
     @Test func snackDoesNotFixGrumpyMood() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.preview(.grumpy)
         pet.feed()
         #expect(!pet.toolsAvailable)
@@ -34,7 +34,7 @@ import Testing
         #expect(pet.toolsAvailable)
     }
     @Test func needsNeverExceedTheirBounds() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         for _ in 0..<10 { pet.feed(); pet.play() }
         #expect(pet.fullness == 100)
         #expect(pet.happiness == 100)
@@ -44,7 +44,7 @@ import Testing
         #expect(!pet.toolsAvailable)
     }
     @Test func sleepPausesNeeds() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.sleep()
         let fullness = pet.fullness
         let happiness = pet.happiness
@@ -55,7 +55,7 @@ import Testing
         #expect(pet.mood == .happy)
     }
     @Test func pocketClosesWhenNeedsDropBelowThreshold() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.fullness = 20.1
         pet.openPocket()
         #expect(pet.panelOpen)
@@ -63,7 +63,7 @@ import Testing
         #expect(!pet.panelOpen)
     }
     @Test func offeringRequiresAcceptanceBeforeReward() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.preview(.hungry)
         pet.offer(.snack)
         #expect(!pet.toolsAvailable)
@@ -74,7 +74,7 @@ import Testing
         #expect(pet.mood == .eating)
     }
     @Test func dragDropAcceptsOnlyKnownCareItems() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.preview(.grumpy)
         #expect(!pet.receive("unrelated clipboard text"))
         #expect(!pet.toolsAvailable)
@@ -85,14 +85,14 @@ import Testing
         #expect(pet.mood == .playing)
     }
     @Test func restRequestDoesNotToggleSleepingPetAwake() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         #expect(pet.receive("rest"))
         #expect(pet.mood == .sleeping)
         #expect(pet.receive("rest"))
         #expect(pet.mood == .sleeping)
     }
     @Test func shellGameRewardsOnlyFindingThePearl() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.preview(.grumpy)
         pet.startShellGame(prize: 2)
         let before = pet.happiness
@@ -107,14 +107,14 @@ import Testing
         #expect(pet.happiness == before + 45)
     }
     @Test func feedingInterruptsShellGame() {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.startShellGame(prize: 1)
         pet.feed()
         #expect(!pet.shellGameActive)
         #expect(pet.mood == .eating)
     }
     @Test func affectionEndsQuickly() async throws {
-        let pet = PetPrototype()
+        let pet = PetModel()
         pet.pet()
         #expect(pet.mood == .happy)
         try await Task.sleep(for: .milliseconds(850))

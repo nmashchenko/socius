@@ -14,6 +14,12 @@ final class MediaController: ObservableObject {
         var key: String
     }
 
+    @Published private(set) var spotifyInstalled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
+    func openSpotify() {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
+            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+        }
+    }
     @Published private(set) var track: Track?
     @Published private(set) var artwork: NSImage?
     @Published private(set) var isPlaying = false
@@ -77,6 +83,7 @@ final class MediaController: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        guard spotifyInstalled else { return }
         feed.onUpdate = { [weak self] snapshot in self?.apply(snapshot) }
         feed.onUnavailable = { [weak self] in self?.switchToScriptingFallback() }
         feed.start()
@@ -100,6 +107,10 @@ final class MediaController: ObservableObject {
         isActive = active
         updateTicker()
         guard active else { return }
+        let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
+        if installed && !spotifyInstalled { spotifyInstalled = true; start() }
+        spotifyInstalled = installed
+        guard installed else { clear(); return }
         refreshVolume()
         tick()
         if feedAvailable {
@@ -150,14 +161,14 @@ final class MediaController: ObservableObject {
         } else if let activeApp {
             script(activeApp)
         } else {
-            PlayerBridge.postMediaKey(key.rawValue)
+            return // Never send a global media key to an unrelated player.
         }
     }
 
     // MARK: - Feed
 
     private func apply(_ snapshot: NowPlayingFeed.Snapshot) {
-        guard !snapshot.isEmpty else { return clear() }
+        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else { return clear() }
 
         let key = "\(snapshot.title)|\(snapshot.artist)|\(snapshot.album)"
         track = Track(title: snapshot.title, artist: snapshot.artist, album: snapshot.album, key: key)
@@ -239,7 +250,7 @@ final class MediaController: ObservableObject {
         NSLog("Cyclop: Now Playing helper unavailable, falling back to Music/Spotify scripting")
 
         let center = DistributedNotificationCenter.default()
-        for app in PlayerApp.allCases {
+        for app in [PlayerApp.spotify] {
             observers.append(center.addObserver(
                 forName: app.changeNotification, object: nil, queue: .main
             ) { [weak self] _ in
@@ -253,7 +264,7 @@ final class MediaController: ObservableObject {
     }
 
     private func refreshFromPlayers() {
-        PlayerBridge.currentState { [weak self] state in
+        PlayerBridge.state(of: .spotify) { [weak self] state in
             guard let self else { return }
             guard let state else { return self.clear() }
 

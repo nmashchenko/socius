@@ -62,12 +62,27 @@ import Testing
         let restored = EdgeDockGeometry.restoredFrame(home: oldHome, visibleScreen: screen)
         #expect(screen.contains(restored))
     }
+    @Test(arguments: [CGRect(x: 0, y: 25, width: 1440, height: 875), CGRect(x: -1920, y: -200, width: 1920, height: 1080)])
+    func tuckingAndUntuckingPreserveTheContinuousVisiblePath(_ screen: CGRect) {
+        let size = CGSize(width: 240, height: 270)
+        for distance in stride(from: -95.0, through: screen.width - size.width + 95, by: 5) {
+            let origin = CGPoint(x: screen.minX + distance, y: screen.minY + 80)
+            let placement = EdgeDockGeometry.placement(visualOrigin: origin, windowSize: size, visibleScreen: screen)
+            #expect(placement.frame.minX + placement.offset == origin.x)
+            #expect(placement.frame.minY == origin.y)
+            if origin.x >= screen.minX && origin.x <= screen.maxX - size.width {
+                #expect(placement.offset == 0)
+            } else {
+                #expect(placement.frame.minX == screen.minX || placement.frame.maxX == screen.maxX)
+            }
+        }
+    }
     @Test func nativeWindowRetreatPeekAndHoverReturn() {
         _ = NSApplication.shared
         guard let screen = NSScreen.main else { return }
         let home = CGRect(x: screen.visibleFrame.maxX - 300, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        let pet = PetPrototype(); pet.quiet = true
+        let pet = PetModel(); pet.quiet = true
         let dock = EdgeDockController(model: pet)
         dock.start(window: panel)
         defer { dock.stop() }
@@ -90,6 +105,7 @@ import Testing
         dock.interact()
         #expect(dock.phase == .engaged)
         #expect(dock.offset == 0)
+        #expect(dock.tilt == 0)
         #expect(panel.frame == home)
         dock.pocketClosed()
         #expect(dock.phase == .tucked)
@@ -104,7 +120,7 @@ import Testing
         guard let screen = NSScreen.main else { return }
         let home = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        let pet = PetPrototype()
+        let pet = PetModel()
         let dock = EdgeDockController(model: pet)
         dock.start(window: panel)
         defer { dock.stop() }
@@ -126,6 +142,62 @@ import Testing
         #expect(dock.phase == .tucked)
     }
 
+    @Test func startsIdleAndCanReturnToItsHome() {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.main else { return }
+        let home = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
+        let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let pet = PetModel(); pet.quiet = true
+        let dock = EdgeDockController(model: pet)
+        dock.start(window: panel)
+        defer { dock.stop() }
+        dock.beginIdle()
+        #expect(dock.phase == .tucked)
+        #expect(abs(dock.offset) == 95)
+        dock.interact()
+        #expect(dock.phase == .engaged)
+        #expect(panel.frame == home)
+    }
+
+    @Test func draggingCancelsRetreatAndKeepsNewPosition() async throws {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.main else { return }
+        let home = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
+        let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let dock = EdgeDockController(model: PetModel())
+        dock.start(window: panel)
+        defer { dock.stop() }
+        dock.simulateIdle()
+        dock.beginUserDrag(at: home.origin)
+        let destination = CGPoint(x: home.minX - 100, y: home.minY + 70)
+        panel.setFrameOrigin(destination)
+        dock.endUserDrag()
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(dock.phase == .engaged)
+        #expect(panel.frame.origin == destination)
+    }
+
+    @Test func draggingFromEdgeClearsTiltWithoutJumping() {
+        _ = NSApplication.shared
+        guard let screen = NSScreen.main else { return }
+        let panel = PetPanel(contentRect: CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY + 100, width: 240, height: 270), styleMask: [.borderless], backing: .buffered, defer: false)
+        let dock = EdgeDockController(model: PetModel())
+        dock.start(window: panel)
+        defer { dock.stop() }
+        dock.beginIdle()
+        let visibleX = panel.frame.minX + dock.offset
+        let pointer = CGPoint(x: visibleX + 100, y: panel.frame.midY)
+        dock.beginUserDrag(at: pointer)
+        dock.dragPet(to: CGPoint(x: pointer.x - 80, y: pointer.y - 20))
+        #expect(dock.offset == 0)
+        #expect(dock.tilt == 0)
+        #expect(panel.frame.minX == visibleX - 80)
+        dock.endUserDrag()
+        #expect(dock.phase == .engaged)
+        #expect(dock.offset == 0)
+        #expect(dock.tilt == 0)
+    }
+
     @Test func desktopHostAcceptsFirstClickWhileInactive() {
         let host = PetHostingView(rootView: SwiftUI.EmptyView())
         #expect(host.acceptsFirstMouse(for: nil))
@@ -135,7 +207,7 @@ import Testing
         guard let screen = NSScreen.main else { return }
         let home = CGRect(x: screen.visibleFrame.maxX - 330, y: screen.visibleFrame.minY + 100, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        let pet = PetPrototype()
+        let pet = PetModel()
         let dock = EdgeDockController(model: pet)
         dock.start(window: panel)
         defer { dock.stop() }

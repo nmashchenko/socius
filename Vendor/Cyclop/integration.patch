@@ -102,7 +102,19 @@
  
 --- upstream/Services/MediaController.swift
 +++ socius/Services/MediaController.swift
-@@ -20,6 +20,39 @@
+@@ -14,12 +14,51 @@
+         var key: String
+     }
+ 
++    @Published private(set) var spotifyInstalled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
++    func openSpotify() {
++        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
++            NSWorkspace.shared.openApplication(at: url, configuration: .init())
++        }
++    }
+     @Published private(set) var track: Track?
+     @Published private(set) var artwork: NSImage?
+     @Published private(set) var isPlaying = false
      @Published private(set) var duration: TimeInterval = 0
      @Published private(set) var position: TimeInterval = 0
      @Published private(set) var sourceName: String?
@@ -142,15 +154,42 @@
      /// Whether the player accepts skipping at all. A browser tab playing one
      /// video registers no handler for it — the command leaves and nothing
      /// happens — so the buttons go dim rather than dead, the way the system's
-@@ -67,6 +100,7 @@
+@@ -44,6 +83,7 @@
+     // MARK: - Lifecycle
+ 
+     func start() {
++        guard spotifyInstalled else { return }
+         feed.onUpdate = { [weak self] snapshot in self?.apply(snapshot) }
+         feed.onUnavailable = { [weak self] in self?.switchToScriptingFallback() }
+         feed.start()
+@@ -67,6 +107,11 @@
          isActive = active
          updateTicker()
          guard active else { return }
++        let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
++        if installed && !spotifyInstalled { spotifyInstalled = true; start() }
++        spotifyInstalled = installed
++        guard installed else { clear(); return }
 +        refreshVolume()
          tick()
          if feedAvailable {
              feed.refresh()
-@@ -129,7 +163,9 @@
+@@ -116,20 +161,22 @@
+         } else if let activeApp {
+             script(activeApp)
+         } else {
+-            PlayerBridge.postMediaKey(key.rawValue)
++            return // Never send a global media key to an unrelated player.
+         }
+     }
+ 
+     // MARK: - Feed
+ 
+     private func apply(_ snapshot: NowPlayingFeed.Snapshot) {
+-        guard !snapshot.isEmpty else { return clear() }
++        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else { return clear() }
+ 
+         let key = "\(snapshot.title)|\(snapshot.artist)|\(snapshot.album)"
          track = Track(title: snapshot.title, artist: snapshot.artist, album: snapshot.album, key: key)
          isPlaying = snapshot.isPlaying || snapshot.rate > 0
          duration = snapshot.duration
@@ -160,6 +199,24 @@
          // Both directions travel together: no player has ever offered one
          // without the other, and two separately dimmed arrows would read as
          // a glitch rather than a limit.
+@@ -203,7 +250,7 @@
+         NSLog("Cyclop: Now Playing helper unavailable, falling back to Music/Spotify scripting")
+ 
+         let center = DistributedNotificationCenter.default()
+-        for app in PlayerApp.allCases {
++        for app in [PlayerApp.spotify] {
+             observers.append(center.addObserver(
+                 forName: app.changeNotification, object: nil, queue: .main
+             ) { [weak self] _ in
+@@ -217,7 +264,7 @@
+     }
+ 
+     private func refreshFromPlayers() {
+-        PlayerBridge.currentState { [weak self] state in
++        PlayerBridge.state(of: .spotify) { [weak self] state in
+             guard let self else { return }
+             guard let state else { return self.clear() }
+ 
 --- upstream/UI/Theme.swift
 +++ socius/UI/Theme.swift
 @@ -1,6 +1,7 @@
@@ -746,7 +803,24 @@
      }
  
      private var emptyState: some View {
-@@ -199,3 +223,43 @@
+@@ -192,10 +216,59 @@
+                 .foregroundStyle(Theme.tertiary)
+             // Status, not instruction: an empty pane on its own would not say
+             // whether nothing is playing or nothing could be read.
+-            Text("Nothing is playing")
++            Text(media.spotifyInstalled ? "Play something in Spotify" : "Spotify Desktop required")
+                 .font(.system(size: 12, weight: .medium))
+                 .foregroundStyle(Theme.secondary)
++            Text(media.spotifyInstalled ? "Open the desktop app to start listening." : "Install the Spotify desktop app to use Music.")
++                .font(.system(size: 11)).foregroundStyle(Theme.secondary)
++            Text("Browser player integration is coming later.")
++                .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
++            if media.spotifyInstalled {
++                Button("Open Spotify") { media.openSpotify() }.buttonStyle(.bordered)
++            } else {
++                Link("Get Spotify", destination: URL(string: "https://www.spotify.com/download/mac/")!)
++            }
+         }
          .frame(maxWidth: .infinity, maxHeight: .infinity)
      }
  }

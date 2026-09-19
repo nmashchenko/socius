@@ -16,6 +16,12 @@ enum EdgeDockGeometry {
         target.origin.y = min(max(home.minY, visibleScreen.minY), max(visibleScreen.minY, visibleScreen.maxY - home.height))
         return target
     }
+    /// Follow the visible flight with the window until its edge reaches the screen.
+    /// Only the remaining off-screen distance belongs in the clipped content offset.
+    static func placement(visualOrigin: CGPoint, windowSize: CGSize, visibleScreen: CGRect) -> (frame: CGRect, offset: CGFloat) {
+        let x = min(max(visualOrigin.x, visibleScreen.minX), max(visibleScreen.minX, visibleScreen.maxX - windowSize.width))
+        return (CGRect(origin: CGPoint(x: x, y: visualOrigin.y), size: windowSize), visualOrigin.x - x)
+    }
 }
 
 struct IdleSchedule {
@@ -48,6 +54,7 @@ struct IdleSchedule {
     enum Phase { case engaged, hiding, tucked, peeking, returning }
     private(set) var phase: Phase = .engaged
     private(set) var offset: CGFloat = 0
+    private(set) var tilt: Double = 0
     private(set) var reminder: String?
     private(set) var leftEdge = false
     var enabled = true { didSet { if !enabled { interact() } } }
@@ -61,25 +68,30 @@ struct IdleSchedule {
     }
     var menuOpen = false
     var pointerInside = false
-    private let model: PetPrototype
+    private let model: PetModel
     private weak var window: NSWindow?
     private var homeFrame = CGRect.zero
     private var schedule = IdleSchedule()
     private var watchTask: Task<Void, Never>?
-    private var transitionTask: Task<Void, Never>?
     private var displayLink: CADisplayLink?
-    private var travelStart = CGRect.zero
-    private var travelTarget = CGRect.zero
+    private var flight: PetFlight?
+    private var travelVelocity = CGPoint.zero
     private var travelBegan: CFTimeInterval = 0
     private var travelCompletion: (() -> Void)?
     private var moving = false
+    private(set) var dragging = false
+    private var dragOrigin = CGPoint.zero
+    private var dragPointerOrigin = CGPoint.zero
+    private(set) var pointerPressed = false
+    private var travelScreen = CGRect.zero
     private var retreatAfterCare = false
     private var reaction = 0
     private var peekStarted: Date?
     private var reminderIndex = 0
     private var motionReduced: Bool { model.quiet || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var tuckedTilt: Double { motionReduced ? 0 : leftEdge ? 4 : -4 }
 
-    init(model: PetPrototype) { self.model = model; super.init() }
+    init(model: PetModel) { self.model = model; super.init() }
     func start(window: NSWindow) {
         self.window = window; homeFrame = window.frame; window.delegate = self
         reaction = model.reaction
@@ -94,7 +106,12 @@ struct IdleSchedule {
         guard let screen = screen(for: homeFrame) else { return }
         repositionHome(EdgeDockGeometry.restoredFrame(home: homeFrame, visibleScreen: screen.visibleFrame))
     }
-    func stop() { watchTask?.cancel(); transitionTask?.cancel(); displayLink?.invalidate(); displayLink = nil; travelCompletion = nil }
+    private func cancelTravel() {
+        displayLink?.invalidate(); displayLink = nil; travelCompletion = nil
+        flight = nil; travelVelocity = .zero
+        moving = false
+    }
+    func stop() { watchTask?.cancel(); cancelTravel() }
     func hover(_ inside: Bool) {
         pointerInside = inside
         // Keep the target under the pointer until the user actually clicks it.
@@ -102,33 +119,86 @@ struct IdleSchedule {
     }
     func interact() {
         schedule.interact(at: Date()); reminder = nil
-        guard phase != .engaged, phase != .returning else { return }
+        guard !pointerPressed, !dragging, phase != .engaged else { return }
+        guard phase != .returning || displayLink == nil else { return }
         restore()
     }
     private var careActive: Bool {
         model.shellGameActive || model.offering != nil || [.eating, .playing, .happy].contains(model.mood)
     }
     func pocketClosed() {
-        guard enabled, !menuOpen, phase == .engaged else { return }
+        guard enabled, !menuOpen, !pointerPressed, !dragging, phase == .engaged else { return }
         reaction = model.reaction
         guard !careActive else { retreatAfterCare = true; schedule.interact(at: Date()); return }
         hide(at: Date())
     }
+    func pressPet() {
+        pointerPressed = true
+        // Freeze travel on mouse-down, before deciding between a click and a drag.
+        cancelTravel()
+        schedule.interact(at: Date())
+    }
+    func releasePet() {
+        pointerPressed = false
+        schedule.interact(at: Date())
+    }
+    func beginUserDrag(at point: CGPoint) {
+        guard !dragging, let window else { return }
+        cancelTravel()
+        dragging = true; retreatAfterCare = false; reminder = nil
+        // Fold the content's screen position into the window exactly once.
+        let origin = CGPoint(x: window.frame.minX + offset, y: window.frame.minY)
+        moving = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            offset = 0; tilt = 0; phase = .engaged
+            // Resolve the current SwiftUI drawing before moving its backing surface.
+            window.contentView?.needsLayout = true
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.contentView?.displayIfNeeded()
+            window.setFrameOrigin(origin)
+        }
+        dragOrigin = window.frame.origin; dragPointerOrigin = point
+        moving = false
+        schedule.interact(at: Date())
+    }
+    func dragPet(to point: CGPoint) {
+        guard dragging else { return }
+        moving = true
+        window?.setFrameOrigin(CGPoint(x: dragOrigin.x + point.x - dragPointerOrigin.x,
+                                      y: dragOrigin.y + point.y - dragPointerOrigin.y))
+        moving = false
+    }
+    func endUserDrag() {
+        guard dragging, let window else { return }
+        dragging = false
+        homeFrame = window.frame
+        phase = .engaged; offset = 0; tilt = 0; retreatAfterCare = false
+        schedule.interact(at: Date())
+    }
     func windowDidMove(_ notification: Notification) {
-        guard !moving, let window else { return }
-        if phase == .engaged { homeFrame = window.frame; schedule.interact(at: Date()) }
-        else if phase == .tucked || phase == .peeking { restore() }
+        guard !moving, !pointerPressed, !dragging, phase == .engaged, let window else { return }
+
+        homeFrame = window.frame
+        schedule.interact(at: Date())
     }
     func repositionHome(_ frame: CGRect) {
-        displayLink?.invalidate(); displayLink = nil; travelCompletion = nil
-        transitionTask?.cancel(); moving = true
+        (window as? PetPanel)?.petInput?.cancel()
+        dragging = false; pointerPressed = false; retreatAfterCare = false
+        cancelTravel(); moving = true
         window?.setFrame(frame, display: true)
-        homeFrame = frame; phase = .engaged; offset = 0; reminder = nil
+        homeFrame = frame; phase = .engaged; offset = 0; tilt = 0; reminder = nil
         moving = false; schedule.interact(at: Date())
     }
     func update(at now: Date) {
+        if pointerPressed || dragging {
+            schedule.interact(at: now)
+            return
+        }
+        if NSEvent.pressedMouseButtons & 1 != 0 { schedule.interact(at: now); return }
         if reaction != model.reaction { reaction = model.reaction; interact() }
-        if model.shellGameActive || [.eating, .playing].contains(model.mood) { retreatAfterCare = true }
+        if model.shellGameActive || model.offering != nil || [.eating, .playing].contains(model.mood) { retreatAfterCare = true }
         if !enabled { retreatAfterCare = false }
         if retreatAfterCare && !careActive && enabled && !menuOpen && phase == .engaged {
             retreatAfterCare = false
@@ -143,7 +213,7 @@ struct IdleSchedule {
             if model.mood != .sleeping && schedule.shouldPeek(at: now) { peek(at: now) }
         case .peeking:
             if let peekStarted, now.timeIntervalSince(peekStarted) >= IdleSchedule.peekDuration {
-                phase = .tucked; offset = leftEdge ? -95 : 95; reminder = nil
+                phase = .tucked; offset = leftEdge ? -95 : 95; tilt = tuckedTilt; reminder = nil
             }
         case .hiding, .returning: break
         }
@@ -155,16 +225,16 @@ struct IdleSchedule {
         }
     }
     private func hide(at now: Date) {
-        guard !careActive else { return }
+        guard !careActive, !pointerPressed, !dragging else { return }
         guard let window, let screen = screen(for: window.frame) else { return }
         retreatAfterCare = false
         homeFrame = window.frame
         leftEdge = homeFrame.midX < screen.visibleFrame.midX
         phase = .hiding; reminder = nil
         let target = EdgeDockGeometry.dockFrame(home: homeFrame, visibleScreen: screen.visibleFrame)
-        slide(to: target) { [weak self] in
+        slide(to: target, targetOffset: leftEdge ? -95 : 95, targetTilt: tuckedTilt) { [weak self] in
             guard let self else { return }
-            self.phase = .tucked; self.offset = self.leftEdge ? -95 : 95
+            self.phase = .tucked
             self.schedule.tucked(at: Date())
         }
     }
@@ -172,7 +242,6 @@ struct IdleSchedule {
         phase = .peeking; peekStarted = now
         schedule.tucked(at: now)
         let showReminder = !model.quiet
-        // A speaking peek emerges farther so its bubble stays legible on screen.
         offset = leftEdge ? -95 : 95
         if showReminder {
             let lines = ["Just a little hello.", "Eight arms, if you need a hand.", "I’m here. No rush."]
@@ -182,7 +251,7 @@ struct IdleSchedule {
     }
     private func restore() {
         guard let window, let screen = screen(for: homeFrame) else { return }
-        phase = .returning; offset = 0; reminder = nil
+        phase = .returning; reminder = nil
         let target = EdgeDockGeometry.restoredFrame(home: homeFrame, visibleScreen: screen.visibleFrame)
         slide(to: target) { [weak self] in
             self?.phase = .engaged; self?.homeFrame = window.frame
@@ -190,35 +259,54 @@ struct IdleSchedule {
         }
     }
     /// Small, cancellable on-screen travel; each retarget starts at the current frame.
-    private func slide(to target: CGRect, completion: @escaping @MainActor () -> Void) {
-        transitionTask?.cancel()
-        displayLink?.invalidate(); displayLink = nil; travelCompletion = nil
+    private func slide(to target: CGRect, targetOffset: CGFloat = 0, targetTilt: Double = 0, completion: @escaping @MainActor () -> Void) {
+        let velocity = travelVelocity
+        cancelTravel()
         guard let window else { return }
         moving = true
-        let start = window.frame
         if motionReduced {
-            window.setFrame(target, display: true); moving = false; completion(); return
+            window.setFrame(target, display: true); offset = targetOffset; tilt = 0; moving = false; completion(); return
         }
-        travelStart = start; travelTarget = target; travelBegan = CACurrentMediaTime()
+        // Plan the visible pet's position; window travel and content offset use the same sample.
+        flight = PetFlight(start: CGPoint(x: window.frame.minX + offset, y: window.frame.minY),
+                           target: CGPoint(x: target.minX + targetOffset, y: target.minY),
+                           velocity: velocity, startTilt: tilt, targetTilt: targetTilt)
+        travelBegan = CACurrentMediaTime()
         travelCompletion = completion
         guard let screen = window.screen ?? NSScreen.main else {
-            window.setFrame(target, display: true); moving = false; travelCompletion = nil; completion(); return
+            window.setFrame(target, display: true); offset = targetOffset; tilt = targetTilt; moving = false; travelCompletion = nil; flight = nil; completion(); return
         }
+        travelScreen = screen.visibleFrame
         let link = screen.displayLink(target: self, selector: #selector(advanceTravel(_:)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 60)
+        let refreshRate = Float(screen.maximumFramesPerSecond)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: min(60, refreshRate), maximum: refreshRate, preferred: refreshRate)
         displayLink = link
         link.add(to: .main, forMode: .common)
     }
     @objc private func advanceTravel(_ link: CADisplayLink) {
-        guard let window else { link.invalidate(); displayLink = nil; travelCompletion = nil; return }
-        let t = min(1, max(0, (link.targetTimestamp - travelBegan) / 0.28))
-        let eased = Self.travelCurve(t)
-        window.setFrameOrigin(CGPoint(x: travelStart.minX + (travelTarget.minX - travelStart.minX) * eased,
-                                      y: travelStart.minY + (travelTarget.minY - travelStart.minY) * eased))
-        if t >= 1 {
-            link.invalidate(); displayLink = nil; moving = false
-            let completion = travelCompletion; travelCompletion = nil; completion?()
+        guard let window, let flight else { cancelTravel(); return }
+        let sample = flight.sample(at: link.targetTimestamp - travelBegan)
+        travelVelocity = sample.velocity; tilt = sample.tilt
+        let placement = EdgeDockGeometry.placement(visualOrigin: sample.position, windowSize: window.frame.size, visibleScreen: travelScreen)
+        offset = placement.offset
+        window.setFrameOrigin(placement.frame.origin)
+        if sample.finished {
+            let completion = travelCompletion
+            cancelTravel()
+            completion?()
         }
+    }
+    /// Launch at the edge without flashing the engaged pet first.
+    func beginIdle() {
+        guard let window, let screen = screen(for: window.frame) else { return }
+        cancelTravel()
+        homeFrame = window.frame
+        leftEdge = homeFrame.midX < screen.visibleFrame.midX
+        moving = true
+        window.setFrame(EdgeDockGeometry.dockFrame(home: homeFrame, visibleScreen: screen.visibleFrame), display: true)
+        moving = false
+        phase = .tucked; offset = leftEdge ? -95 : 95; tilt = tuckedTilt; reminder = nil
+        schedule.tucked(at: Date())
     }
     func simulateIdle() {
         menuOpen = false; pointerInside = false
@@ -228,16 +316,5 @@ struct IdleSchedule {
     func simulateReminder() {
         guard phase == .tucked || phase == .peeking else { return }
         peek(at: Date())
-    }
-    /// Inverts the established (0.77, 0, 0.175, 1) on-screen movement curve.
-    private static func travelCurve(_ x: Double) -> Double {
-        var low = 0.0, high = 1.0
-        for _ in 0..<16 {
-            let t = (low + high) / 2
-            let value = 3 * (1 - t) * (1 - t) * t * 0.77 + 3 * (1 - t) * t * t * 0.175 + t * t * t
-            if value < x { low = t } else { high = t }
-        }
-        let t = (low + high) / 2
-        return 3 * (1 - t) * t * t + t * t * t
     }
 }

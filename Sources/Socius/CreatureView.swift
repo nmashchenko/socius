@@ -30,7 +30,7 @@ struct PixelProp: View {
 }
 
 struct CreatureView: View {
-    let model: PetPrototype
+    let model: PetModel
     var size: CGFloat = 150
     var idleMotion = true
     var shyEdge: Bool? = nil
@@ -81,7 +81,7 @@ struct CreatureView: View {
                 phase = step
             }
         }
-        .accessibilityLabel("Mochi, \(model.mood.rawValue.lowercased())")
+        .accessibilityLabel("\(model.displayName), \(model.mood.rawValue.lowercased())")
     }
     private var heartTrail: some View {
         ForEach(0..<3) { index in

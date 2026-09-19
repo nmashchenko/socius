@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct InteractivePet: View {
-    let model: PetPrototype
+    let model: PetModel
     var size: CGFloat = 140
     var clicked: (() -> Void)? = nil
     var idleMotion = true
@@ -22,19 +22,19 @@ struct InteractivePet: View {
                 return model.receive(item)
             } isTargeted: { targeted = $0 }
             .accessibilityAddTraits(.isButton)
-            .accessibilityHint(model.offering == nil ? "Pet Mochi" : "Accept the offered item")
+            .accessibilityHint(model.offering == nil ? "Pet \(model.displayName)" : "Accept the offered item")
             .accessibilityAction { if let clicked { clicked() } else { model.acceptOffering() } }
     }
 }
 
 struct CareTray: View {
-    let model: PetPrototype
+    let model: PetModel
     var pocketAction: (() -> Void)?
     var afterAction: () -> Void = {}
     var body: some View {
         HStack(spacing: 8) {
             action("Feed", "fork.knife") { model.feed(); afterAction() }
-                .help("Feed Mochi: \(model.species.foodName)")
+                .help("Feed \(model.displayName): \(model.species.foodName)")
             action("Play", "sparkles") { model.startShellGame(); afterAction() }
                 .help("\(model.species.gameName): find the pearl")
             action(model.mood == .sleeping ? "Wake" : "Sleep", model.mood == .sleeping ? "sun.max" : "moon") { model.sleep(); afterAction() }
@@ -70,12 +70,12 @@ struct SpeechBubble: View {
                 }.allowsHitTesting(false)
             }
             .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel("Mochi says: \(text)")
+            .accessibilityLabel("Pet says: \(text)")
     }
 }
 
 struct ShellGameView: View {
-    let model: PetPrototype
+    let model: PetModel
     var body: some View {
         HStack(spacing: 9) {
             ForEach(0..<3) { index in
@@ -90,7 +90,7 @@ struct ShellGameView: View {
 }
 
 struct PocketView: View {
-    @Bindable var model: PetPrototype
+    @Bindable var model: PetModel
     let close: () -> Void
     var nativePopover = false
     var openTool: ((PocketTool) -> Void)? = nil
@@ -98,7 +98,7 @@ struct PocketView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.pocketAttachedOnRight) private var attachedOnRight
     @State private var homeHeight: CGFloat = 310
-    private let tools: [(String, String)] = [("Shelf", "square.stack.3d.up"), ("Clipboard", "doc.on.clipboard"), ("Music", "music.note"), ("Snippets", "text.quote"), ("Notes", "note.text"), ("AI Credits", "chart.bar"), ("Layouts", "rectangle.3.group")]
+    private let tools: [(String, String)] = [("Shelf", "square.stack.3d.up"), ("Clipboard", "doc.on.clipboard"), ("Music", "music.note"), ("Snippets", "text.quote"), ("Notes", "note.text"), ("AI Credits", "chart.bar"), ("Layouts", "rectangle.3.group"), ("Settings", "gearshape")]
     var body: some View {
         if nativePopover {
             ZStack(alignment: attachedOnRight ? .trailing : .leading) {
@@ -133,7 +133,7 @@ struct PocketView: View {
             HStack {
                 Text("Hey, friend.").font(.system(size: 19, weight: .medium, design: .serif))
                 Spacer()
-                Button(action: close) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 24, height: 24) }
+                Button(action: close) { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 36, height: 36).contentShape(Rectangle()) }
                     .buttonStyle(.plain).accessibilityLabel("Close pocket")
             }
             Label(model.moodLabel, systemImage: model.toolsAvailable ? "heart.fill" : "heart")
@@ -147,7 +147,7 @@ struct PocketView: View {
             }.foregroundStyle(Palette.muted)
             if model.toolsAvailable {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(tools, id: \.0) { name, icon in
+                ForEach(tools.filter { model.showsTool($0.0) }, id: \.0) { name, icon in
                     Button {
                         model.selectedTool = name
                         if let tool = PocketTool(rawValue: name) {
@@ -178,11 +178,10 @@ struct PocketView: View {
 }
 
 struct DesktopPetView: View {
-    @Bindable var model: PetPrototype
+    @Bindable var model: PetModel
     let presence: EdgeDockController
     var openStudio: (() -> Void)? = nil
     let hub: ToolHub
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pocketOpen = false
     @State private var waitingForReturn = false
     var body: some View {
@@ -197,21 +196,21 @@ struct DesktopPetView: View {
                         .transition(.opacity)
                 }
             }.frame(height: 70)
-            InteractivePet(model: model, size: 140, clicked: {
-                presence.interact()
-                if model.offering != nil { model.acceptOffering() }
-                else { model.pet(); hub.showingTool = false; requestPocket() }
-            }, idleMotion: presence.phase == .engaged,
+            InteractivePet(model: model, size: 140, clicked: clickPet, idleMotion: presence.phase == .engaged && !presence.dragging,
                shyEdge: [.tucked, .peeking].contains(presence.phase) ? presence.leftEdge : nil)
-                .rotationEffect(.degrees([.tucked, .peeking].contains(presence.phase) && model.mood != .sleeping ? (presence.leftEdge ? 7 : -7) : 0))
+                .rotationEffect(.degrees(model.mood != .sleeping ? presence.tilt : 0))
+                .background(PetPointerInput(presence: presence, clicked: clickPet, dragBegan: {
+                    waitingForReturn = false
+                    setPocketOpen(false, retreatOnClose: false)
+                }))
                 .onHover { presence.hover($0) }
-                .background(AnchoredPocket(isPresented: $pocketOpen, model: model, hub: hub))
+                .background(AnchoredPocket(isPresented: Binding(get: { pocketOpen }, set: { setPocketOpen($0) }), model: model, hub: hub))
                 .contextMenu {
                     Button("Feed shrimp", action: model.feed)
                     Button("Play shell hunt") { model.startShellGame() }
                     Button(model.mood == .sleeping ? "Wake up" : "Tuck in", action: model.sleep)
                     Divider()
-                    Button(presence.enabled ? "Keep Mochi here" : "Auto-hide at the edge") { presence.enabled.toggle() }
+                    Button(presence.enabled ? "Keep \(model.displayName) here" : "Auto-hide at the edge") { presence.enabled.toggle() }
                     if let openStudio {
                         Button("Interaction playground", action: openStudio)
                     }
@@ -222,30 +221,40 @@ struct DesktopPetView: View {
             }.frame(height: 40)
         }.frame(width: 240, height: 270)
             .offset(x: presence.offset)
-            .animation(reduceMotion || model.quiet ? nil : .spring(duration: 0.28, bounce: 0.12), value: presence.offset)
             .frame(width: 240, height: 270).clipped()
-            .animation(.easeOut(duration: 0.15), value: presence.reminder)
-            .onChange(of: pocketOpen) {
-                presence.menuOpen = pocketOpen || hub.store.isChoosingFiles
-                if presence.menuOpen { presence.interact() }
-                else { presence.pocketClosed() }
-            }
+            // Position and pose share the display-link clock; no second SwiftUI spring.
             .onChange(of: hub.store.isChoosingFiles) { presence.menuOpen = pocketOpen || hub.store.isChoosingFiles }
-            .onChange(of: hub.store.filePickerFinished) { presence.interact(); pocketOpen = true }
+            .onChange(of: hub.store.filePickerFinished) { presence.interact(); setPocketOpen(true) }
             .onChange(of: presence.phase) {
                 if waitingForReturn && presence.phase == .engaged {
                     waitingForReturn = false
-                    pocketOpen = true
+                    setPocketOpen(true)
                 }
             }
             .onChange(of: hub.openRequest, initial: true) {
                 guard hub.openRequest > 0 else { return }
                 presence.interact(); requestPocket()
             }
-            .onExitCommand { pocketOpen = false; model.offering = nil; model.shellGameActive = false }
+            .onChange(of: model.mood) { presence.update(at: Date()) }
+            .onChange(of: model.offering) { presence.update(at: Date()) }
+            .onChange(of: model.shellGameActive) { presence.update(at: Date()) }
+            .onExitCommand { setPocketOpen(false); model.offering = nil; model.shellGameActive = false }
+    }
+    private func clickPet() {
+        presence.interact()
+        if model.offering != nil { model.acceptOffering() }
+        else { model.pet(); hub.showingTool = false; requestPocket() }
+    }
+    private func setPocketOpen(_ open: Bool, retreatOnClose: Bool = true) {
+        if !open { waitingForReturn = false }
+        guard pocketOpen != open else { return }
+        pocketOpen = open
+        presence.menuOpen = open || hub.store.isChoosingFiles
+        if presence.menuOpen { presence.interact() }
+        else if retreatOnClose { presence.pocketClosed() }
     }
     private func requestPocket() {
-        if presence.phase == .engaged { pocketOpen = true }
+        if presence.phase == .engaged { setPocketOpen(true) }
         else { waitingForReturn = true }
     }
 }

@@ -11,15 +11,16 @@ struct CareButton: View {
                 Text(title).font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(Palette.ink).frame(maxWidth: .infinity).padding(.vertical, 13)
-            .background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 15))
+            .background(Palette.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 15))
         }.buttonStyle(.plain)
     }
 }
 
 struct PlaygroundView: View {
-    @Bindable var model: PetPrototype
+    @Bindable var model: PetModel
     var presence: EdgeDockController? = nil
     var openTool: ((PocketTool) -> Void)? = nil
+    var replayOnboarding: (() -> Void)? = nil
     @State private var petPosition = CGSize.zero
     @GestureState private var drag = CGSize.zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -29,31 +30,26 @@ struct PlaygroundView: View {
                 .background(Color(red: 0.93, green: 0.93, blue: 0.87))
             Rectangle().fill(Palette.ink.opacity(0.08)).frame(width: 1)
             VStack(alignment: .leading, spacing: 24) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("A LITTLE COMPANY").font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(2).foregroundStyle(Palette.muted)
-                        Text("Meet your desk buddy.").font(.system(size: 31, weight: .medium, design: .serif)).foregroundStyle(Palette.ink)
+                Text("Playground").font(.system(size: 28, weight: .medium, design: .serif)).foregroundStyle(Palette.ink)
+                Text("Preview your pet and try its controls.").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                if let replayOnboarding {
+                    Button(action: replayOnboarding) {
+                        Label("Replay onboarding", systemImage: "arrow.counterclockwise")
                     }
-                    Spacer()
-                    Text("INTERACTION STUDY  /  03").font(.system(size: 9, weight: .medium, design: .monospaced)).foregroundStyle(Palette.muted).padding(.top, 8)
                 }
                 stage
-                HStack(alignment: .top, spacing: 25) {
-                    explanation("01", "Make a little connection", "Click Mochi for a little love and its menu. Feed shrimp, find a pearl, or tuck it in.")
-                    explanation("02", "Give it a home", "Drag your buddy to a favorite spot. The desktop pet can move independently.")
-                    explanation("03", "A hand when you need it", "Open the pocket for your tools. Close it and get back to your day.")
-                }
                 Spacer(minLength: 0)
                 HStack {
                     Circle().fill(Palette.green).frame(width: 5, height: 5)
                     Text("Developer playground · controls affect your desktop pet").font(.system(size: 11)).foregroundStyle(Palette.muted)
                     Spacer()
-                    Text("A little care goes a long way.").font(.system(size: 12, design: .serif)).italic().foregroundStyle(Palette.muted)
+
                 }
             }.padding(32)
         }
         .background(Palette.cream)
         .preferredColorScheme(.light)
+        .buttonStyle(PocketButtonStyle(compact: true))
     }
 
     private var sidebar: some View {
@@ -63,12 +59,12 @@ struct PlaygroundView: View {
                 Text("socius").font(.system(size: 25, weight: .semibold, design: .rounded)).foregroundStyle(Palette.ink)
             }.padding(.bottom, 8)
             VStack(alignment: .leading, spacing: 12) {
-                sectionLabel("THE LITTLE DETAILS")
-                Text("Mochi").font(.system(size: 22, weight: .medium, design: .serif))
+                sectionLabel("PET")
+                Text(model.displayName).font(.system(size: 22, weight: .medium, design: .serif))
                 Text("Eight little arms. A little attitude.").font(.system(size: 12)).foregroundStyle(Palette.muted)
             }
             VStack(alignment: .leading, spacing: 12) {
-                sectionLabel("A LITTLE GIVE & TAKE")
+                sectionLabel("NEEDS")
                 needMeter("Full tummy", value: model.fullness, icon: "fork.knife")
                 needMeter("Good spirits", value: model.happiness, icon: "heart")
                 Text(model.toolsAvailable ? "Feeling helpful. The pocket is open for business." : "On a tiny strike. Care first, shortcuts after.")
@@ -79,15 +75,14 @@ struct PlaygroundView: View {
                 Text("Developer only · changes the desktop pet too")
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 HStack(spacing: 6) {
-                    ForEach([PetPrototype.Mood.content, .hungry, .grumpy], id: \.rawValue) { mood in
+                    ForEach([PetModel.Mood.content, .hungry, .grumpy], id: \.rawValue) { mood in
                         Button(mood == .content ? "Ready" : mood.rawValue) { model.preview(mood) }
-                            .buttonStyle(.plain).font(.system(size: 10, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 8)
-                            .background(.white.opacity(0.7), in: Capsule())
+                            .buttonStyle(PocketButtonStyle(compact: true))
                     }
                 }
             }
             VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("TRY A MOMENT")
+                sectionLabel("ACTIVITIES")
                 HStack(spacing: 8) {
                     CareButton(title: "Pet", icon: "hand.draw", action: model.pet)
                     CareButton(title: "Snack", icon: "fork.knife", action: model.feed)
@@ -147,7 +142,7 @@ struct PlaygroundView: View {
             }.clipShape(RoundedRectangle(cornerRadius: 24))
             VStack {
                 HStack {
-                    Text("YOUR DESKTOP, A LITTLE WARMER").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.4).foregroundStyle(Palette.muted)
+                    Text("PREVIEW").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.4).foregroundStyle(Palette.muted)
                     Spacer()
                     Image(systemName: "sun.max").foregroundStyle(Palette.muted)
                 }.opacity(model.panelOpen ? 0 : 1)
@@ -169,7 +164,7 @@ struct PlaygroundView: View {
                     })
                     if model.shellGameActive { ShellGameView(model: model) }
                     CareTray(model: model, pocketAction: nil)
-                    Text("MOCHI").font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(2).foregroundStyle(Palette.muted)
+                    Text(model.displayName.uppercased()).font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(2).foregroundStyle(Palette.muted)
                 }
                 .frame(width: model.panelOpen ? 150 : 220)
                 .offset(x: model.panelOpen ? 0 : petPosition.width + drag.width, y: model.panelOpen ? 0 : petPosition.height + drag.height)
@@ -206,12 +201,5 @@ struct PlaygroundView: View {
     }
     private func sectionLabel(_ text: String) -> some View {
         Text(text).font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.3).foregroundStyle(Palette.muted)
-    }
-    private func explanation(_ number: String, _ title: String, _ detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(number).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.muted)
-            Text(title).font(.system(size: 13, weight: .medium, design: .serif)).foregroundStyle(Palette.ink)
-            Text(detail).font(.system(size: 11)).foregroundStyle(Palette.muted).lineSpacing(4)
-        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }

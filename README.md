@@ -20,7 +20,7 @@ Click Mochi, then choose a tool. A transparent native host keeps the pet’s poc
 | --- | --- | --- |
 | Shelf | Cyclop file cards, grouped selection/copy/drag, Quick Look thumbnails, screenshot capture, open/reveal/remove | Drop files or use Add files; choose a screenshot folder to watch |
 | Clipboard | Cyclop’s latest 40 text/file entries, click to copy, delete, clear, privacy cover; copied images go to Shelf | Collects across apps by default; pause with Remember copies |
-| Music | Cyclop Now Playing artwork, playback controls and seeking, with local-player fallback | Uses the current player automatically; macOS may request Automation access |
+| Music | Spotify Desktop artwork, playback controls, seeking and system volume | Requires Spotify Desktop; browser integration is planned |
 | Snippets | Named reusable text, search, copy, inline editing, reorder and delete | Press + |
 | Notes | Autosaving scratchpad with first-line titles and separate note selection | New Note |
 | AI Credits | Codex and Claude allowance windows and reset times | Automatic installed CLI access; optional Claude Keychain fallback |
@@ -69,7 +69,7 @@ SOCIUS_LIVE_USAGE_TEST=1 swift test --disable-sandbox --filter liveCodexUsageCon
 
 Tests cover pet interactions, display-linked travel, persistence and corrupt-file preservation, clipboard privacy/retention, screenshot ordering, usage parsing and RPC handshake, Claude settings restoration, and layout geometry. Spotify authorization/playback and Accessibility window control require manual checks on the host Mac.
 
-Custom vibe-added skills remain the final phase after these built-in tools are reviewed. `Deferred/Services` is historical scaffolding excluded from the build; active implementations live in `Sources/Socius` and `Vendor/Cyclop/Sources`.
+Socius ships a predefined set of pocket tools. Active implementations live in `Sources/Socius` and `Vendor/Cyclop/Sources`; obsolete scaffolding has been removed.
 
 The transparent host and in-place transition approach were informed by Cyclop’s [NotchPanel](https://github.com/akalikbergenov/cyclop/blob/main/Sources/Cyclop/Notch/NotchPanel.swift) and [Theme](https://github.com/akalikbergenov/cyclop/blob/main/Sources/Cyclop/UI/Theme.swift); Socius retains its own pet-anchored layout and visual style.
 
@@ -78,3 +78,17 @@ Overlapping tools directly reuse Cyclop’s MIT-licensed source. See [source att
 Local builds use the persistent **Socius Local Development** code-signing identity in the login Keychain. Its certificate is trusted for code signing only. The designated requirement pins the app identifier and signing certificate, rather than the changing binary hash, so rebuilding retains the same permission identity. The transition from older ad-hoc builds may require granting Accessibility access once more. This follows [Apple’s designated-requirement guidance](https://developer.apple.com/library/archive/technotes/tn2206/). A production release should use an Apple-issued signing identity via `CODESIGN_IDENTITY`.
 
 
+
+## Inspiration
+
+Socius’s pocket tools are inspired by [Cyclop](https://github.com/akalikbergenov/cyclop). Shelf, clipboard, music, notes and snippets reuse its MIT-licensed implementations, adapted for Socius’s pet and pocket. See [the source attribution and integration changes](Vendor/Cyclop/README.md).
+
+## Personalize your pet
+
+Open **Settings** in the pocket or menu bar to name your pet, enable Quiet mode, or open a bug report on GitHub. Name, quiet mode and hidden pocket tools persist locally. Use Show in pocket to choose which built-in tools are visible. The first launch introduces your pet against a softly blurred backdrop; Skip and Escape dismiss it. After the greeting, the pet retreats to the screen edge. Later launches start idle. Developers can replay the greeting from the playground’s Replay onboarding button or with `--onboarding`.
+
+Bring the pet to your cursor with **Control–Option–M**. Record another global combination in Settings; shortcut preferences stay on this Mac. Shortcuts require Command, Control or Option, and unavailable combinations show an error.
+
+## Releases
+
+See [release preparation](docs/releasing.md) for signed, notarized DMG builds and [0.1.0 beta notes](docs/releases/0.1.0-beta.1.md). Release scripts keep credentials in Keychain and do not publish automatically.

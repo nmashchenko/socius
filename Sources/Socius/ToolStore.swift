@@ -2,7 +2,7 @@ import AppKit
 import Observation
 
 enum PocketTool: String, CaseIterable, Identifiable {
-    case shelf = "Shelf", clipboard = "Clipboard", music = "Music", snippets = "Snippets", notes = "Notes", usage = "AI Credits", layouts = "Layouts"
+    case shelf = "Shelf", clipboard = "Clipboard", music = "Music", snippets = "Snippets", notes = "Notes", usage = "AI Credits", layouts = "Layouts", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -13,6 +13,7 @@ enum PocketTool: String, CaseIterable, Identifiable {
         case .notes: "note.text"
         case .usage: "chart.bar"
         case .layouts: "rectangle.3.group"
+        case .settings: "gearshape"
         }
     }
 }
