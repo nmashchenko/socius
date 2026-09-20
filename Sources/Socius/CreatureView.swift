@@ -39,18 +39,22 @@ struct CreatureView: View {
     var size: CGFloat = 150
     var idleMotion = true
     var shyEdge: Bool? = nil
+    var walking = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0
     private var still: Bool { reduceMotion || model.quiet }
+    private var stepping: Bool { walking && !still }
     private var rippling: Bool { idleMotion && !still && !model.shellGameActive && [.content, .hungry, .grumpy].contains(model.mood) }
     private var breathing: Bool { !still && model.mood == .sleeping }
     private var waving: Bool { shyEdge != nil && !still && [.content, .hungry, .grumpy].contains(model.mood) }
     private var chewing: Bool { model.mood == .eating && (3...7).contains(phase) }
     var body: some View {
         ZStack {
-            TimelineView(.animation(minimumInterval: 0.25, paused: !rippling && !breathing && !waving)) { timeline in
+            TimelineView(.animation(minimumInterval: stepping ? 1.0 / 30 : 0.25, paused: !stepping && !rippling && !breathing && !waving)) { timeline in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 sprite(at: time)
+                    .offset(y: stepping ? -abs(sin(time * 12)) * 3 : 0)
+                    .rotationEffect(.degrees(stepping ? sin(time * 12) * 2 : 0))
                     .scaleEffect(x: model.mood == .sleeping ? 1.03 : chewing && !still && phase % 2 == 0 ? 1.04 : 1,
                                  y: model.mood == .sleeping ? 0.87 + (breathing ? sin(time * 1.25) * 0.018 : 0) : chewing && !still && phase % 2 == 0 ? 0.96 : 1, anchor: .bottom)
                     .overlay(alignment: .topTrailing) {
@@ -136,7 +140,8 @@ struct CreatureView: View {
                 block(3, 16, 2, 3, coral); block(19, 16, 2, 3, coral)
             } else {
                 for (index, x) in [4, 7, 10, 13, 16, 19].enumerated() {
-                    let wave = rippling ? Int((sin(time * 1.8 - Double(index) * 0.9) * 1.1).rounded()) : 0
+                    let wave = stepping ? Int((sin(time * 12 + Double(index % 2) * .pi) * 1.5).rounded())
+                        : rippling ? Int((sin(time * 1.8 - Double(index) * 0.9) * 1.1).rounded()) : 0
                     let length = (x % 2 == 0 ? 3 : 4) + wave
                     block(x, 18, 2, length, coral)
                     block(x + (x < 12 ? 1 : -1), 18 + length, 2, 1, coral)

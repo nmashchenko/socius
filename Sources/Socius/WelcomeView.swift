@@ -35,11 +35,8 @@ struct WelcomeView: View {
                 }
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2 - 145)
                 .opacity(greeting && !exiting ? 1 : 0)
-                CreatureView(model: model, size: 140, idleMotion: false)
-                    .scaleEffect(arrived || gentle ? 1 : 0.92)
-                    .rotationEffect(.degrees(arrived || gentle ? 0 : -12))
-                    .offset(x: arrived || gentle ? 0 : -geometry.size.width * 0.6,
-                            y: arrived || gentle ? 0 : 100)
+                CreatureView(model: model, size: 140, idleMotion: false, walking: arrived && !greeting && !gentle)
+                    .offset(x: arrived || gentle ? 0 : -geometry.size.width * 0.6)
                     .opacity(arrived ? 1 : 0)
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                     .onTapGesture(perform: complete)
@@ -55,11 +52,11 @@ struct WelcomeView: View {
         }.preferredColorScheme(.light)
         .onExitCommand(perform: complete)
         .task {
-            withAnimation(gentle ? .easeOut(duration: 0.2) : .spring(duration: 0.5, bounce: 0.2)) { arrived = true }
+            withAnimation(gentle ? .easeOut(duration: 0.2) : .timingCurve(0.77, 0, 0.175, 1, duration: 1.2)) { arrived = true }
             do {
-                try await Task.sleep(for: .milliseconds(500))
-                guard !finished else { return }
+                try await Task.sleep(for: .milliseconds(gentle ? 200 : 1200))
                 withAnimation(.easeOut(duration: 0.2)) { greeting = true }
+                guard !finished else { return }
                 try await Task.sleep(for: .seconds(7))
                 complete()
             } catch { }
@@ -71,7 +68,7 @@ struct WelcomeView: View {
         let settling = !greeting && !gentle
         withAnimation(.easeOut(duration: 0.2)) { exiting = true }
         Task {
-            try? await Task.sleep(for: .milliseconds(settling ? 500 : 200))
+            try? await Task.sleep(for: .milliseconds(settling ? 1200 : 200))
             finish()
         }
     }
