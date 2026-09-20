@@ -129,6 +129,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
             if CommandLine.arguments.contains("--developer") { showStudio() }
         }
     }
+    func applicationDidBecomeActive(_ notification: Notification) { tools.layouts.refreshAccess() }
     func applicationDidChangeScreenParameters(_ notification: Notification) { edgeDock.screenChanged() }
     func showTool(_ tool: PocketTool) {
         guard pet.toolsAvailable || tool == .settings else { return }

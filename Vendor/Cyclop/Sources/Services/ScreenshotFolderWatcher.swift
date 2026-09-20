@@ -16,6 +16,8 @@ import UniformTypeIdentifiers
 final class ScreenshotFolderWatcher {
     /// A new screenshot file, ready to go on the shelf.
     var onImage: ((URL) -> Void)?
+    var onAccessError: (() -> Void)?
+    private var accessPanel: NSOpenPanel?
 
     private let enabledKey = "screenshotFolderWatch.enabled"
     private let pathKey = "screenshotFolderWatch.path"
@@ -48,10 +50,13 @@ final class ScreenshotFolderWatcher {
     /// Puts up the Open panel that stands in for a Privacy prompt. Starts
     /// watching immediately on approval; changes nothing on cancel.
     func requestAccess(completion: @escaping (Bool) -> Void) {
+        guard accessPanel == nil else { completion(false); return }
         let panel = NSOpenPanel()
+        accessPanel = panel
+        panel.level = .modalPanel
         panel.title = localized("Choose Screenshots Folder")
         panel.message = localized(
-            "Cyclop will watch this folder for new screenshots and add them to the shelf."
+            "Socius will watch this folder for new screenshots and add them to the shelf."
         )
         panel.prompt = localized("Watch")
         panel.canChooseDirectories = true
@@ -60,22 +65,32 @@ final class ScreenshotFolderWatcher {
         panel.allowsMultipleSelection = false
         panel.directoryURL = Self.systemLocation
         panel.begin { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else {
+            guard let self else { completion(false); return }
+            self.accessPanel = nil
+            guard response == .OK, let url = panel.url else {
+                completion(false)
+                return
+            }
+            guard self.start(at: url) else {
+                self.onAccessError?()
                 completion(false)
                 return
             }
             PocketDefaults.shared.set(url.path, forKey: self.pathKey)
             PocketDefaults.shared.set(true, forKey: self.enabledKey)
-            self.start(at: url)
             completion(true)
         }
+        panel.makeKeyAndOrderFront(nil)
     }
 
     /// Called at launch. Silent — the folder was already granted once, so
     /// resuming asks nothing further.
     func resumeIfEnabled() {
         guard isEnabled, let folderPath else { return }
-        start(at: URL(fileURLWithPath: folderPath, isDirectory: true))
+        if !start(at: URL(fileURLWithPath: folderPath, isDirectory: true)) {
+            PocketDefaults.shared.set(false, forKey: enabledKey)
+            onAccessError?()
+        }
     }
 
     /// The Settings tab's off switch. Clears the grant along with the watch, so
@@ -92,12 +107,15 @@ final class ScreenshotFolderWatcher {
         source = nil
     }
 
-    private func start(at folder: URL) {
-        stop()
-        seen = Set(entries(in: folder).map(\.lastPathComponent))
+    @discardableResult
+    func start(at folder: URL) -> Bool {
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return false }
+        let names = Set(entries.map(\.lastPathComponent))
 
         let fd = open(folder.path, O_EVTONLY)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
+        stop()
+        seen = names
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd, eventMask: .write, queue: .main
         )
@@ -112,6 +130,7 @@ final class ScreenshotFolderWatcher {
         source.setCancelHandler { close(fd) }
         source.resume()
         self.source = source
+        return true
     }
 
     /// A directory `.write` event fires for any change to its listing — new

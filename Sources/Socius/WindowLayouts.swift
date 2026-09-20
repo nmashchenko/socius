@@ -127,24 +127,57 @@ nonisolated enum WindowAccess {
 
 @Observable final class WindowLayoutService {
     private(set) var busy = false
-    private(set) var trusted = AXIsProcessTrusted()
+    private(set) var trusted: Bool
     var message: String?
-    private var requestedAccess = false
+    private(set) var requestedAccess = false
+    @ObservationIgnored private let checkAccess: () -> Bool
+    @ObservationIgnored private let promptForAccess: () -> Void
+    @ObservationIgnored private let openAccessSettings: () -> Void
+    @ObservationIgnored private var permissionWatch: Task<Void, Never>?
+
+    init(checkAccess: @escaping () -> Bool = { AXIsProcessTrusted() },
+         promptForAccess: @escaping () -> Void = {
+             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+             _ = AXIsProcessTrustedWithOptions(options)
+         },
+         openAccessSettings: @escaping () -> Void = {
+             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+         }) {
+        self.checkAccess = checkAccess
+        self.promptForAccess = promptForAccess
+        self.openAccessSettings = openAccessSettings
+        trusted = checkAccess()
+    }
     func refreshAccess() {
-        let allowed = AXIsProcessTrusted()
+        let allowed = checkAccess()
         if allowed && !trusted { message = nil }
         trusted = allowed
+        if allowed { permissionWatch?.cancel(); permissionWatch = nil }
     }
     func requestAccess() {
         refreshAccess()
         guard !trusted else { return }
-        if !requestedAccess {
+        if requestedAccess {
+            openAccessSettings()
+        } else {
             requestedAccess = true
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
+            // The system prompt already has an Open System Settings button.
+            promptForAccess()
         }
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-        message = "Allow Socius in System Settings → Privacy & Security → Accessibility."
+        message = "Enable Socius in Privacy & Security → Accessibility. This updates automatically when access is granted."
+        refreshAccess()
+        guard !trusted else { message = nil; return }
+        permissionWatch?.cancel()
+        // Survive the pocket closing when System Settings takes focus.
+        permissionWatch = Task { [weak self] in
+            let deadline = ContinuousClock.now.advanced(by: .seconds(300))
+            while !Task.isCancelled && ContinuousClock.now < deadline {
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                guard self != nil else { return }
+                self?.refreshAccess()
+                if self?.trusted == true { return }
+            }
+        }
     }
     private var screens: [LayoutDisplay] {
         let top = NSScreen.screens.first?.frame.maxY ?? 0

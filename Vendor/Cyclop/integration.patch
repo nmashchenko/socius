@@ -78,7 +78,16 @@
  }
 --- upstream/Services/ScreenshotFolderWatcher.swift
 +++ socius/Services/ScreenshotFolderWatcher.swift
-@@ -27,11 +27,11 @@
+@@ -16,6 +16,8 @@
+ final class ScreenshotFolderWatcher {
+     /// A new screenshot file, ready to go on the shelf.
+     var onImage: ((URL) -> Void)?
++    var onAccessError: (() -> Void)?
++    private var accessPanel: NSOpenPanel?
+
+     private let enabledKey = "screenshotFolderWatch.enabled"
+     private let pathKey = "screenshotFolderWatch.path"
+@@ -27,11 +29,11 @@
      private var seen: Set<String> = []
 
      var isEnabled: Bool {
@@ -92,18 +101,59 @@
      }
 
      /// Where `screencapture` saves files today — read the same preference it
-@@ -64,8 +64,8 @@
+@@ -48,10 +50,13 @@
+     /// Puts up the Open panel that stands in for a Privacy prompt. Starts
+     /// watching immediately on approval; changes nothing on cancel.
+     func requestAccess(completion: @escaping (Bool) -> Void) {
++        guard accessPanel == nil else { completion(false); return }
+         let panel = NSOpenPanel()
++        accessPanel = panel
++        panel.level = .modalPanel
+         panel.title = localized("Choose Screenshots Folder")
+         panel.message = localized(
+-            "Cyclop will watch this folder for new screenshots and add them to the shelf."
++            "Socius will watch this folder for new screenshots and add them to the shelf."
+         )
+         panel.prompt = localized("Watch")
+         panel.canChooseDirectories = true
+@@ -60,30 +65,40 @@
+         panel.allowsMultipleSelection = false
+         panel.directoryURL = Self.systemLocation
+         panel.begin { [weak self] response in
+-            guard let self, response == .OK, let url = panel.url else {
++            guard let self else { completion(false); return }
++            self.accessPanel = nil
++            guard response == .OK, let url = panel.url else {
                  completion(false)
                  return
              }
 -            UserDefaults.standard.set(url.path, forKey: self.pathKey)
 -            UserDefaults.standard.set(true, forKey: self.enabledKey)
+-            self.start(at: url)
++            guard self.start(at: url) else {
++                self.onAccessError?()
++                completion(false)
++                return
++            }
 +            PocketDefaults.shared.set(url.path, forKey: self.pathKey)
 +            PocketDefaults.shared.set(true, forKey: self.enabledKey)
-             self.start(at: url)
              completion(true)
          }
-@@ -82,8 +82,8 @@
++        panel.makeKeyAndOrderFront(nil)
+     }
+
+     /// Called at launch. Silent — the folder was already granted once, so
+     /// resuming asks nothing further.
+     func resumeIfEnabled() {
+         guard isEnabled, let folderPath else { return }
+-        start(at: URL(fileURLWithPath: folderPath, isDirectory: true))
++        if !start(at: URL(fileURLWithPath: folderPath, isDirectory: true)) {
++            PocketDefaults.shared.set(false, forKey: enabledKey)
++            onAccessError?()
++        }
+     }
+
+     /// The Settings tab's off switch. Clears the grant along with the watch, so
      /// turning it back on goes through the panel again rather than silently
      /// resuming access nobody remembers giving.
      func disable() {
@@ -114,6 +164,34 @@
          stop()
      }
 
+@@ -92,12 +107,15 @@
+         source = nil
+     }
+
+-    private func start(at folder: URL) {
+-        stop()
+-        seen = Set(entries(in: folder).map(\.lastPathComponent))
++    @discardableResult
++    func start(at folder: URL) -> Bool {
++        guard let entries = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return false }
++        let names = Set(entries.map(\.lastPathComponent))
+
+         let fd = open(folder.path, O_EVTONLY)
+-        guard fd >= 0 else { return }
++        guard fd >= 0 else { return false }
++        stop()
++        seen = names
+         let source = DispatchSource.makeFileSystemObjectSource(
+             fileDescriptor: fd, eventMask: .write, queue: .main
+         )
+@@ -112,6 +130,7 @@
+         source.setCancelHandler { close(fd) }
+         source.resume()
+         self.source = source
++        return true
+     }
+
+     /// A directory `.write` event fires for any change to its listing — new
 --- upstream/Services/MediaController.swift
 +++ socius/Services/MediaController.swift
 @@ -14,12 +14,51 @@

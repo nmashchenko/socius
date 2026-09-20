@@ -202,7 +202,7 @@ private struct LayoutToolView: View {
                     Task { if let layout = await service.capture(name: name), store.update({ $0.layouts.append(layout) }) { name = "" } }
                 }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || service.busy)
             }
-            if !service.trusted { Button("Allow window control…", action: service.requestAccess).font(.caption) }
+            if !service.trusted { Button(service.requestedAccess ? "Open Accessibility Settings…" : "Allow window control…", action: service.requestAccess).font(.caption) }
             if let message = service.message {
                 HStack(spacing: 8) {
                     if service.busy { ProgressView().controlSize(.small) }

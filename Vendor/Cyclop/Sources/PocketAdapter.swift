@@ -38,10 +38,15 @@ import AppKit
             self?.shelf.add([url])
         }
         screenshots.onImage = { [weak self] url in self?.shelf.add([url]) }
+        screenshots.onAccessError = { [weak self] in
+            self?.screenshotNotice = "Folder access is unavailable. Choose Watch screenshots to grant access again."
+        }
         if rememberCopies { clipboard.start() }
         screenshots.resumeIfEnabled()
         media.start()
     }
+
+    @Published var screenshotNotice: String?
 
     public func stop() {
         started = false
@@ -71,9 +76,17 @@ import AppKit
     }
 
     func watchScreenshots() {
+        guard !choosingFiles else { return }
+        screenshotNotice = nil
+        screenshots.onAccessError = { [weak self] in
+            self?.screenshotNotice = "Couldn’t read that folder. Choose it again and allow access if macOS asks."
+        }
         choosingFiles = true
         NSApp.activate(ignoringOtherApps: true)
-        screenshots.requestAccess { [weak self] _ in self?.choosingFiles = false }
+        screenshots.requestAccess { [weak self] granted in
+            self?.choosingFiles = false
+            if granted { self?.screenshotNotice = "Watching the selected folder for new screenshots." }
+        }
     }
 
     // One-time import; the original tools.json remains intact for rollback.
@@ -147,6 +160,9 @@ public struct CyclopPocketPane: View {
                     Button("Add files…", action: pocket.addFiles)
                     Button("Watch screenshots…", action: pocket.watchScreenshots)
                 }.buttonStyle(PocketToolbarButton())
+                if let notice = pocket.screenshotNotice {
+                    Text(notice).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                }
                 ShelfPane(shelf: pocket.shelf, isTargeted: targeted)
                     .dropDestination(for: URL.self) { urls, _ in
                         pocket.shelf.add(urls)
