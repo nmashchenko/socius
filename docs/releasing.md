@@ -38,3 +38,9 @@ GitHub runners cannot access this Mac’s Keychain. Configure these repository A
 Local packaging continues to support `NOTARY_PROFILE=socius-notary`; no credential export is necessary for local builds. No secrets are uploaded by these scripts automatically. Secret provisioning and the first hosted run remain setup steps.
 
 Adapted from [Cyclop release.sh](https://github.com/akalikbergenov/cyclop/blob/main/Scripts/release.sh), [release workflow](https://github.com/akalikbergenov/cyclop/blob/main/.github/workflows/release.yml), and its DMG/notarization flow, under the [MIT license retained in this repository](../Vendor/Cyclop/LICENSE). Socius adds its own test suite, a separate beta tag/build number, temporary credential cleanup, and draft-first publication. Unlike Cyclop’s unsigned dry-run fallback, hosted release preparation requires signing credentials even for manual runs.
+
+## Development and release permissions
+
+Development bundles use `app.socius.desktop.development` and display as Socius Dev. Developer ID releases retain `app.socius.desktop`. Do not reuse the production identifier for local certificates: macOS can show an enabled Accessibility switch while rejecting the running app because the stored signing requirement belongs to another copy.
+
+For a machine affected by older development builds, first replace those builds with the separate development identity. Quit Socius, run `tccutil reset Accessibility app.socius.desktop`, and reopen `/Applications/Socius.app`. Request window control and enable the installed app once. This scoped reset affects only Socius's Accessibility grant; it is a manual repair, never an automatic app-startup action.
