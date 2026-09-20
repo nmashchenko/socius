@@ -150,7 +150,8 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
         guard welcome == nil else { return }
         pet.cancelActivity()
         if let panel = petPanel { edgeDock.repositionHome(panel.frame) }
-        guard let screen = studio?.screen ?? NSScreen.main else { edgeDock.beginIdle(); return }
+        // Screen 1 is the primary display, not the display of the focused window.
+        guard let screen = NSScreen.screens.first else { edgeDock.beginIdle(); return }
         edgeDock.menuOpen = true
         petPanel?.orderOut(nil)
         let window = PetPanel(contentRect: screen.visibleFrame, styleMask: [.borderless], backing: .buffered, defer: false)
