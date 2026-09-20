@@ -1,6 +1,6 @@
 # Socius
 
-https://github.com/user-attachments/assets/c2a40d01-f58c-461b-b264-e004815c9a06
+https://github.com/user-attachments/assets/f8982b67-c3de-4c96-bae2-8521b0959aea
 
 A tiny pixel octopus that lives on your Mac, with a working pocket of everyday tools.
 
