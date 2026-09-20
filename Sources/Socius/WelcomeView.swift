@@ -35,7 +35,7 @@ struct WelcomeView: View {
                 }
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2 - 145)
                 .opacity(greeting && !exiting ? 1 : 0)
-                CreatureView(model: model, size: 140, idleMotion: false, walking: arrived && !greeting && !gentle)
+                CreatureView(model: model, size: 140, idleMotion: false, walking: arrived && !gentle)
                     .offset(x: arrived || gentle ? 0 : -geometry.size.width * 0.6)
                     .opacity(arrived ? 1 : 0)
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
