@@ -82,7 +82,10 @@ struct ShellGameView: View {
                 Button { model.chooseShell(index) } label: {
                     PixelProp(kind: .shell).frame(width: 36, height: 32)
                         .opacity(model.emptyShells.contains(index) ? 0.25 : 1)
-                }.buttonStyle(.plain).disabled(model.emptyShells.contains(index))
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                    .allowsWindowActivationEvents()
+                    .disabled(model.emptyShells.contains(index))
                     .accessibilityLabel("Shell \(index + 1)")
             }
         }.padding(.top, 2)
@@ -202,7 +205,7 @@ struct DesktopPetView: View {
                 .background(PetPointerInput(presence: presence, clicked: clickPet, dragBegan: {
                     waitingForReturn = false
                     setPocketOpen(false, retreatOnClose: false)
-                }))
+                }).frame(width: 140, height: 140))
                 .onHover { presence.hover($0) }
                 .background(AnchoredPocket(isPresented: Binding(get: { pocketOpen }, set: { setPocketOpen($0) }), model: model, hub: hub))
                 .contextMenu {

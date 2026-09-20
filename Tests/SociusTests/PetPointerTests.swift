@@ -41,7 +41,7 @@ import Testing
         func petPoint() throws -> CGPoint {
             // Choose the middle of the visible part, including when the pet is tucked/clipped.
             let region = try #require(panel.petInput)
-            let rect = region.convert(region.visibleRect, to: nil)
+            let rect = region.convert(region.bounds.intersection(region.visibleRect), to: nil)
             return panel.convertPoint(toScreen: CGPoint(x: rect.midX, y: rect.midY))
         }
 
@@ -56,6 +56,25 @@ import Testing
             try await Task.sleep(for: .milliseconds(950))
             panel.contentView?.layoutSubtreeIfNeeded()
         }
+    }
+
+    @Test func shellRowIsOutsideThePetDragRegion() async throws {
+        let desktop = try Desktop()
+        defer { desktop.close() }
+        desktop.pet.startShellGame(prize: 1)
+        try await desktop.settle()
+        let region = try #require(desktop.panel.petInput)
+        // The shell row is centered 30 points above the panel bottom.
+        let point = CGPoint(x: 120, y: 30)
+        let event = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: desktop.panel.windowNumber, context: nil, eventNumber: 1,
+            clickCount: 1, pressure: 1))
+        #expect(!region.handle(event))
+        #expect(!desktop.dock.pointerPressed)
+        let host = try #require(desktop.panel.contentView)
+        #expect(host.hitTest(host.convert(point, from: nil)) != nil)
+
     }
 
     @Test(arguments: [false, true])

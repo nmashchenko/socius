@@ -36,7 +36,7 @@ final class PetPointerRegion: NSView {
         switch event.type {
         case .leftMouseDown:
             guard event.window === window, !event.modifierFlags.contains(.control),
-                  visibleRect.contains(convert(event.locationInWindow, from: nil)) else { return false }
+                  bounds.intersection(visibleRect).contains(convert(event.locationInWindow, from: nil)) else { return false }
             pressLocation = screenLocation(of: event)
             presence.pressPet()
         case .leftMouseDragged:

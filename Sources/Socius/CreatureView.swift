@@ -9,15 +9,15 @@ struct PixelProp: View {
         Canvas { context, size in
             let rows: [String] = switch kind {
             case .shrimp: ["  rrrr   ", " rrwrrr  ", "rrw  rkr ", "rrw   rr ", " rrr     ", "  rrrr   ", "   rr rr ", "   r   r "]
-            case .shell: ["   yy    ", "  ybyy   ", " ybybyy  ", "ybybybyy ", "ybybybyy ", " yyyyyy  ", "  yyyy   "]
+            case .shell: ["    y    ", "   yby   ", "  ybyby  ", " ybybyby ", "ybybybyby", " yyyyyyy ", "  yyyyy  "]
             case .pearl: ["        ", "  www   ", " wwyww  ", " wwwww  ", " wwwyw  ", "  www   "]
             case .heart: [" rr rr ", "rrrrrrr", "rrrrrrr", " rrrrr ", "  rrr  ", "   r   "]
             }
             let unit = floor(min(size.width / 9, size.height / 8))
-            // Shell artwork occupies 8 × 7 pixels inside the shared 9 × 8 grid.
+            // Shell artwork occupies 9 × 7 pixels inside the shared 9 × 8 grid.
             // Center the visible sprite, not the grid's trailing empty space.
             let origin = kind == .shell
-                ? CGPoint(x: floor((size.width - 8 * unit) / 2), y: floor((size.height - 7 * unit) / 2))
+                ? CGPoint(x: floor((size.width - 9 * unit) / 2), y: floor((size.height - 7 * unit) / 2))
                 : .zero
             for (y, row) in rows.enumerated() { for (x, pixel) in row.enumerated() where pixel != " " {
                 if kind == .shrimp && bite > 0 && x > 4 && y < 3 + bite { continue }
