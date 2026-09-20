@@ -10,7 +10,7 @@ import Combine
     var pocketHomeHeight: CGFloat = 310
     var toolHeight: CGFloat {
         switch selected {
-        case .settings: 450
+        case .settings: 540
         case .music: 280
         case .shelf: 260
         case .clipboard, .snippets: 290
@@ -42,7 +42,7 @@ struct PocketToolView: View {
     let back: () -> Void
     let close: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
             HStack(spacing: 10) {
                 Button(action: back) {
                     Image(systemName: "chevron.left").font(.system(size: 13, weight: .medium)).frame(width: 32, height: 36).contentShape(Rectangle())
@@ -60,7 +60,7 @@ struct PocketToolView: View {
             if pet.toolsAvailable || hub.selected == .settings {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
                     Text(pet.fullness <= 20 ? "A little shrimp before we work?" : "Find a pearl with me first?")
                     CareTray(model: pet)
                     if pet.shellGameActive { ShellGameView(model: pet) }
@@ -75,7 +75,7 @@ struct PocketToolView: View {
                     Button { hub.store.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
                 }.padding(10).background(Palette.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
-        }.padding(18).frame(height: hub.toolHeight)
+        }.padding(PocketMetrics.pageInset).frame(height: hub.toolHeight)
             .foregroundStyle(Palette.ink).background(Palette.cream).preferredColorScheme(.light)
             .buttonStyle(PocketButtonStyle())
     }
@@ -99,22 +99,23 @@ private struct EmptyToolView: View {
             Image(systemName: icon).font(.system(size: 30)).foregroundStyle(Palette.green)
             Text(title).font(.system(size: 17, weight: .medium, design: .serif))
             Text(detail).font(.system(size: 12)).foregroundStyle(Palette.muted).multilineTextAlignment(.center)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(24)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, PocketMetrics.sectionGap).padding(.vertical, PocketMetrics.rowGap)
     }
 }
 
 private struct UsageToolView: View {
     let service: UsageService
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
                 Text("Uses installed CLIs automatically. Keychain access is optional and only starts when you ask.")
                     .font(.system(size: 12)).foregroundStyle(Palette.muted)
                 provider("Codex", service.codex)
                 provider("Claude", service.claude)
                 Text("Allowances are percentages of each provider’s limits. A missing or expired update is shown as unknown.")
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
-            }
+            }.background(PocketScrollGutterFix())
         }.scrollIndicators(.hidden).task {
             await service.loadInstalledCLIs()
 
@@ -122,7 +123,7 @@ private struct UsageToolView: View {
     }
 
     private func provider(_ name: String, _ usage: ProviderUsage) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: PocketMetrics.controlInset) {
             let loading = name == "Codex" ? service.codexLoading : service.claudeLoading
             HStack {
                 Text(name).font(.system(size: 17, weight: .medium, design: .serif))
@@ -183,7 +184,7 @@ private struct UsageToolView: View {
             Text(usage.message).fixedSize(horizontal: false, vertical: true).font(.system(size: 11)).foregroundStyle(Palette.muted).textSelection(.enabled)
             }
             if let updated = usage.updatedAt { Text("Received \(updated.formatted(date: .abbreviated, time: .shortened))").font(.system(size: 10)).foregroundStyle(Palette.muted) }
-        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+        }.padding(PocketMetrics.sectionGap).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -192,12 +193,11 @@ private struct LayoutToolView: View {
     let service: WindowLayoutService
     @State private var name = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: PocketMetrics.controlInset) {
             Text("Arrange your apps, then save their positions. Restore opens missing apps and places their available windows; it doesn’t reopen documents or browser tabs.")
                 .font(.system(size: 12)).foregroundStyle(Palette.muted)
             HStack {
-                TextField("Name your layout", text: $name).textFieldStyle(.plain).font(.system(size: 12)).padding(10)
-                    .background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                TextField("Name your layout", text: $name).modifier(PocketInputStyle())
                 Button("Save current") {
                     Task { if let layout = await service.capture(name: name), store.update({ $0.layouts.append(layout) }) { name = "" } }
                 }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || service.busy)
@@ -212,8 +212,8 @@ private struct LayoutToolView: View {
             if store.data.layouts.isEmpty {
                 EmptyToolView(icon: "rectangle.3.group", title: "Everything in its place", detail: "Save a work setup and bring it back with one click.")
             } else {
-                ScrollView {
-                    VStack(spacing: 10) {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: PocketMetrics.rowGap) {
                         ForEach(store.data.layouts) { layout in
                             HStack {
                                 VStack(alignment: .leading, spacing: 6) {

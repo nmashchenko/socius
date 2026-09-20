@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// Shared layout scale for Socius and its imported pocket panes.
+public enum PocketMetrics {
+    public static let small: CGFloat = 6
+    public static let rowGap: CGFloat = 8
+    public static let controlInset: CGFloat = 12
+    public static let sectionGap: CGFloat = 16
+    public static let pageInset: CGFloat = 18
+    public static let controlHeight: CGFloat = 34
+    public static let rowHeight: CGFloat = 30
+    public static let cornerRadius: CGFloat = 10
+}
+
 enum Theme {
     static let ink = Color(red: 0.23, green: 0.28, blue: 0.24)
     static let openAnimation = Animation.spring(response: 0.27, dampingFraction: 0.82)
@@ -60,7 +72,7 @@ struct NotchToggleStyle: ToggleStyle {
             configuration.isOn.toggle()
         } label: {
             Capsule()
-                .fill(configuration.isOn ? Color.accentColor : Theme.surfaceHover)
+                .fill(configuration.isOn ? Color(red: 0.37, green: 0.47, blue: 0.31) : Theme.surfaceHover)
                 .frame(width: 28, height: 16)
                 .overlay(
                     Circle()

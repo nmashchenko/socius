@@ -142,7 +142,7 @@ public struct CyclopPocketPane: View {
     @ViewBuilder private var content: some View {
         switch tool {
         case "Shelf":
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
                 HStack {
                     Button("Add files…", action: pocket.addFiles)
                     Button("Watch screenshots…", action: pocket.watchScreenshots)
@@ -154,7 +154,7 @@ public struct CyclopPocketPane: View {
                     } isTargeted: { targeted = $0 }
             }
         case "Clipboard":
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
                 HStack {
                     Toggle("Remember copies", isOn: $pocket.rememberCopies).toggleStyle(NotchToggleStyle())
                     Text("Remember copies").font(.system(size: 12))

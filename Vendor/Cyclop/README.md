@@ -28,8 +28,10 @@ Shared theme, privacy controls, copy feedback, localization helpers, and skeleto
 
 Run `swift test --disable-sandbox` and `./Scripts/bundle.sh`. Actual music playback, file dragging between apps, and Accessibility restore still require host interaction; passing parser/store tests is not a claim of complete UI parity or measured 60 fps.
 
-Modified upstream files: `Services/Support.swift`, `Services/ConfigStore.swift`, `Services/ShelfStore.swift`, `Services/MediaController.swift`, `Services/ScreenshotFolderWatcher.swift`, `UI/Theme.swift`, `UI/SpoilerField.swift`, `UI/ShelfPane.swift`, `UI/SnippetsPane.swift`, `UI/NotesPane.swift`, `UI/MediaPane.swift`.
+Modified upstream files: `Services/Support.swift`, `Services/ConfigStore.swift`, `Services/ShelfStore.swift`, `Services/MediaController.swift`, `Services/ScreenshotFolderWatcher.swift`, `UI/Theme.swift`, `UI/SpoilerField.swift`, `UI/ShelfPane.swift`, `UI/ClipboardPane.swift`, `UI/SnippetsPane.swift`, `UI/NotesPane.swift`, `UI/MediaPane.swift`.
 
 Additional Socius adaptations: Notes uses `PocketNoteEditor` (an owned NSTextView/NSScrollView) to avoid the legacy scrollbar gutter while retaining Cyclop’s NoteStore and autosave. Privacy dots use the light theme’s ink color. The Music volume control changes system output volume, rather than Spotify’s app volume. Its refreshed layout adds a playback-state bar indicator, restrained artwork scaling, and press feedback with Reduce Motion support; it does not sample audio. SnippetInput uses a native text field with a stable editing baseline. Clipboard and Snippets have shorter pocket pages. These changes are recorded in the integration patch where upstream files were modified.
 
 Music motion inspiration: [ElevenLabs UI audio components](https://ui.elevenlabs.io/docs/components). The SwiftUI implementation is original; no ElevenLabs dependency or service is used.
+
+PocketMetrics defines shared spacing and control sizes for imported panes and Socius screens. Clipboard rows use the same spacing scale; toggles use the sage accent.

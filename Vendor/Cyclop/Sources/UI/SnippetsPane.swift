@@ -105,14 +105,14 @@ struct SnippetsPane: View {
     /// is two rows tall in a panel that never resizes, and one of the two is
     /// the list.
     private var editor: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: PocketMetrics.rowGap) {
             SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focused == .label,
                              onFocus: { focused = .label }, submit: commit)
-                .frame(width: 92, height: 30)
+                .frame(width: 92, height: PocketMetrics.controlHeight)
 
             SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focused == .text,
                              onFocus: { focused = .text }, submit: commit)
-                .frame(height: 32)
+                .frame(height: PocketMetrics.controlHeight)
 
             Button { commit() } label: {
                 Image(systemName: "checkmark")
@@ -137,7 +137,7 @@ struct SnippetsPane: View {
             .pointerStyle(.default)
         }
         .padding(.horizontal, 4)
-        .frame(height: 34)
+        .frame(height: PocketMetrics.controlHeight)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Theme.ink.opacity(0.065))
@@ -272,7 +272,7 @@ private struct SnippetRow: View {
 
                 SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focus == .text,
                              onFocus: { focus = .text }, submit: commit)
-                .frame(height: 32)
+                .frame(height: PocketMetrics.controlHeight)
                 .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
 

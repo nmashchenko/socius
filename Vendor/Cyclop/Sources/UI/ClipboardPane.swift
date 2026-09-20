@@ -13,7 +13,7 @@ struct ClipboardPane: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 3) {
+                    VStack(spacing: PocketMetrics.rowGap) {
                         ForEach(clipboard.items) { item in
                             ClipRow(item: item, clipboard: clipboard, privacy: privacy)
                         }
@@ -23,7 +23,7 @@ struct ClipboardPane: View {
                 footer
             }
         }
-        .padding(.top, 2)
+        .padding(.top, PocketMetrics.rowGap)
     }
 
     private var footer: some View {
@@ -35,7 +35,7 @@ struct ClipboardPane: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.secondary)
         }
-        .padding(.top, 2)
+        .padding(.top, PocketMetrics.rowGap)
     }
 }
 
@@ -73,7 +73,7 @@ private struct ClipRow: View {
             }
         }
         .padding(.horizontal, 9)
-        .frame(height: 26)
+        .frame(height: PocketMetrics.rowHeight)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(hovering ? Theme.surfaceHover : Theme.surface)

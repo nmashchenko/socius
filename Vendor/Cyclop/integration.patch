@@ -56,7 +56,7 @@
              .map { ShelfItem(url: $0, icon: Self.icon(forName: $0)) }
 @@ -249,6 +249,6 @@
      }
- 
+
      private func persist() {
 -        UserDefaults.standard.set(items.map(\.url.path), forKey: defaultsKey)
 +        PocketDefaults.shared.set(items.map(\.url.path), forKey: defaultsKey)
@@ -66,17 +66,17 @@
 +++ socius/Services/ScreenshotFolderWatcher.swift
 @@ -27,11 +27,11 @@
      private var seen: Set<String> = []
- 
+
      var isEnabled: Bool {
 -        UserDefaults.standard.bool(forKey: enabledKey)
 +        PocketDefaults.shared.bool(forKey: enabledKey)
      }
- 
+
      var folderPath: String? {
 -        UserDefaults.standard.string(forKey: pathKey)
 +        PocketDefaults.shared.string(forKey: pathKey)
      }
- 
+
      /// Where `screencapture` saves files today — read the same preference it
 @@ -64,8 +64,8 @@
                  completion(false)
@@ -99,13 +99,13 @@
 +        PocketDefaults.shared.removeObject(forKey: pathKey)
          stop()
      }
- 
+
 --- upstream/Services/MediaController.swift
 +++ socius/Services/MediaController.swift
 @@ -14,12 +14,51 @@
          var key: String
      }
- 
+
 +    @Published private(set) var spotifyInstalled = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
 +    func openSpotify() {
 +        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
@@ -156,7 +156,7 @@
      /// happens — so the buttons go dim rather than dead, the way the system's
 @@ -44,6 +83,7 @@
      // MARK: - Lifecycle
- 
+
      func start() {
 +        guard spotifyInstalled else { return }
          feed.onUpdate = { [weak self] snapshot in self?.apply(snapshot) }
@@ -182,13 +182,13 @@
 +            return // Never send a global media key to an unrelated player.
          }
      }
- 
+
      // MARK: - Feed
- 
+
      private func apply(_ snapshot: NowPlayingFeed.Snapshot) {
 -        guard !snapshot.isEmpty else { return clear() }
 +        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else { return clear() }
- 
+
          let key = "\(snapshot.title)|\(snapshot.artist)|\(snapshot.album)"
          track = Track(title: snapshot.title, artist: snapshot.artist, album: snapshot.album, key: key)
          isPlaying = snapshot.isPlaying || snapshot.rate > 0
@@ -201,7 +201,7 @@
          // a glitch rather than a limit.
 @@ -203,7 +250,7 @@
          NSLog("Cyclop: Now Playing helper unavailable, falling back to Music/Spotify scripting")
- 
+
          let center = DistributedNotificationCenter.default()
 -        for app in PlayerApp.allCases {
 +        for app in [PlayerApp.spotify] {
@@ -210,27 +210,39 @@
              ) { [weak self] _ in
 @@ -217,7 +264,7 @@
      }
- 
+
      private func refreshFromPlayers() {
 -        PlayerBridge.currentState { [weak self] state in
 +        PlayerBridge.state(of: .spotify) { [weak self] state in
              guard let self else { return }
              guard let state else { return self.clear() }
- 
+
 --- upstream/UI/Theme.swift
 +++ socius/UI/Theme.swift
-@@ -1,6 +1,7 @@
+@@ -1,6 +1,19 @@
  import SwiftUI
- 
+
++/// Shared layout scale for Socius and its imported pocket panes.
++public enum PocketMetrics {
++    public static let small: CGFloat = 6
++    public static let rowGap: CGFloat = 8
++    public static let controlInset: CGFloat = 12
++    public static let sectionGap: CGFloat = 16
++    public static let pageInset: CGFloat = 18
++    public static let controlHeight: CGFloat = 34
++    public static let rowHeight: CGFloat = 30
++    public static let cornerRadius: CGFloat = 10
++}
++
  enum Theme {
 +    static let ink = Color(red: 0.23, green: 0.28, blue: 0.24)
      static let openAnimation = Animation.spring(response: 0.27, dampingFraction: 0.82)
      static let contentAnimation = Animation.easeOut(duration: 0.16)
      /// Pane switching: the outgoing pane leaves faster than the incoming one
-@@ -15,11 +16,11 @@
+@@ -15,11 +28,11 @@
      static let openTopRadius: CGFloat = 12
      static let openBottomRadius: CGFloat = 22
- 
+
 -    static let secondary = Color.white.opacity(0.55)
 -    static let tertiary = Color.white.opacity(0.32)
 -    static let surface = Color.white.opacity(0.08)
@@ -242,9 +254,9 @@
 +    static let surfaceHover = Theme.ink.opacity(0.14)
 +    static let hairline = Theme.ink.opacity(0.10)
  }
- 
+
  /// Flat, focus-free button used for every control in the panel.
-@@ -30,7 +31,7 @@
+@@ -30,7 +43,7 @@
      func makeBody(configuration: Configuration) -> some View {
          configuration.label
              .font(.system(size: prominent ? 17 : 13, weight: .medium))
@@ -253,10 +265,19 @@
              .frame(width: size, height: size)
              .background(
                  Circle().fill(prominent ? Theme.surfaceHover : Color.clear)
+@@ -59,7 +72,7 @@
+             configuration.isOn.toggle()
+         } label: {
+             Capsule()
+-                .fill(configuration.isOn ? Color.accentColor : Theme.surfaceHover)
++                .fill(configuration.isOn ? Color(red: 0.37, green: 0.47, blue: 0.31) : Theme.surfaceHover)
+                 .frame(width: 28, height: 16)
+                 .overlay(
+                     Circle()
 --- upstream/UI/SpoilerField.swift
 +++ socius/UI/SpoilerField.swift
 @@ -77,7 +77,7 @@
- 
+
          for (index, path) in buckets.enumerated() where !path.isEmpty {
              let alpha = (Double(index) + 0.5) / Double(steps)
 -            context.fill(path, with: .color(.white.opacity(alpha * 0.85)))
@@ -323,7 +344,7 @@
 +            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
              .animation(Theme.contentAnimation, value: isTargeted)
      }
- 
+
 @@ -150,11 +150,11 @@
          .frame(width: 86, height: 92)
          .background(
@@ -356,17 +377,55 @@
                  }
                  .buttonStyle(.plain)
                  .padding(4)
+--- upstream/UI/ClipboardPane.swift
++++ socius/UI/ClipboardPane.swift
+@@ -13,7 +13,7 @@
+                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+             } else {
+                 ScrollView(showsIndicators: false) {
+-                    VStack(spacing: 3) {
++                    VStack(spacing: PocketMetrics.rowGap) {
+                         ForEach(clipboard.items) { item in
+                             ClipRow(item: item, clipboard: clipboard, privacy: privacy)
+                         }
+@@ -23,7 +23,7 @@
+                 footer
+             }
+         }
+-        .padding(.top, 2)
++        .padding(.top, PocketMetrics.rowGap)
+     }
+
+     private var footer: some View {
+@@ -35,7 +35,7 @@
+                 .font(.system(size: 10, weight: .medium))
+                 .foregroundStyle(Theme.secondary)
+         }
+-        .padding(.top, 2)
++        .padding(.top, PocketMetrics.rowGap)
+     }
+ }
+
+@@ -73,7 +73,7 @@
+             }
+         }
+         .padding(.horizontal, 9)
+-        .frame(height: 26)
++        .frame(height: PocketMetrics.rowHeight)
+         .background(
+             RoundedRectangle(cornerRadius: 7, style: .continuous)
+                 .fill(hovering ? Theme.surfaceHover : Theme.surface)
 --- upstream/UI/SnippetsPane.swift
 +++ socius/UI/SnippetsPane.swift
 @@ -11,17 +11,16 @@
      private enum Field { case search, label, text }
- 
+
      @FocusState private var focused: Field?
 -    @State private var isAdding = false
 +    @State private var isAdding = ProcessInfo.processInfo.arguments.contains("--snippet-editor")
      @State private var draftLabel = ""
      @State private var draftText = ""
- 
+
      var body: some View {
 -        VStack(spacing: 6) {
 +        VStack(spacing: 10) {
@@ -422,15 +481,15 @@
 -                )
 -                .focused($focused, equals: .text)
 -                .onSubmit { commit() }
-+        HStack(spacing: 4) {
++        HStack(spacing: PocketMetrics.rowGap) {
 +            SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focused == .label,
 +                             onFocus: { focused = .label }, submit: commit)
-+                .frame(width: 92, height: 30)
++                .frame(width: 92, height: PocketMetrics.controlHeight)
 +
 +            SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focused == .text,
 +                             onFocus: { focused = .text }, submit: commit)
-+                .frame(height: 32)
- 
++                .frame(height: PocketMetrics.controlHeight)
+
              Button { commit() } label: {
                  Image(systemName: "checkmark")
                      .font(.system(size: 10, weight: .semibold))
@@ -444,7 +503,7 @@
 -            .disabled(draftText.isEmpty)
 +            .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 +            .accessibilityLabel("Save snippet")
- 
+
              Button { cancelAdding() } label: {
                  Image(systemName: "xmark")
                      .font(.system(size: 9, weight: .semibold))
@@ -458,7 +517,7 @@
 -        .padding(.horizontal, 6)
 -        .frame(height: 28)
 +        .padding(.horizontal, 4)
-+        .frame(height: 34)
++        .frame(height: PocketMetrics.controlHeight)
          .background(
              RoundedRectangle(cornerRadius: 7, style: .continuous)
 -                .fill(Theme.surfaceHover)
@@ -514,10 +573,10 @@
 +
 +                SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focus == .text,
 +                             onFocus: { focus = .text }, submit: commit)
-+                .frame(height: 32)
++                .frame(height: PocketMetrics.controlHeight)
 +                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
 +                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
- 
+
                  Button { commit() } label: {
                      Image(systemName: "checkmark")
                          .font(.system(size: 10, weight: .semibold))
@@ -565,7 +624,7 @@
                  }
 @@ -146,53 +146,11 @@
      }
- 
+
      private var editor: some View {
 +        VStack(spacing: 8) {
          ZStack(alignment: .topLeading) {
@@ -618,7 +677,7 @@
 +            PocketNoteEditor(text: editorBinding, noteID: notes.selected,
 +                             wantsKeyboard: $wantsKeyboard, editable: !selectedHidden)
 +                .frame(maxWidth: .infinity, maxHeight: .infinity)
- 
+
              if currentText.isEmpty {
                  Text("Jot something down…")
 @@ -216,9 +174,13 @@
@@ -647,11 +706,11 @@
                      .truncationMode(.tail)
              }
 @@ -316,12 +278,18 @@
- 
+
  private struct CopyNoteButton: View {
      let text: String
 +    @State private var copied = false
- 
+
      var body: some View {
 -        CopyButton {
 +        Button {
@@ -672,15 +731,15 @@
 @@ -3,7 +3,9 @@
  struct MediaPane: View {
      @ObservedObject var media: MediaController
- 
+
 +    @Environment(\.accessibilityReduceMotion) private var reduceMotion
      @State private var scrubHover = false
 +    @State private var volumeOpen = false
      /// Set while dragging, so the bar follows the finger instead of the clock.
      @State private var scrubbing: Double?
- 
+
 @@ -13,30 +15,28 @@
- 
+
      var body: some View {
          if let track = media.track {
 -            HStack(spacing: 18) {
@@ -740,7 +799,7 @@
 +        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: media.isPlaying)
 +        .animation(reduceMotion ? nil : Theme.artworkAnimation, value: media.artwork)
      }
- 
+
      // MARK: - Scrubber
 @@ -119,7 +121,7 @@
                      // cursor at once. Smoothness comes from the tick rate
@@ -801,7 +860,7 @@
 +        .frame(maxWidth: .infinity, alignment: .leading)
 +        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: media.canSkip)
      }
- 
+
      private var emptyState: some View {
 @@ -192,10 +216,59 @@
                  .foregroundStyle(Theme.tertiary)

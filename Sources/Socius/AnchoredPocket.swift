@@ -38,7 +38,7 @@ struct AnchoredPocket: NSViewRepresentable {
             let rect = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
             let screen = parent.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? rect
             let left = rect.midX > screen.midX
-            let size = CGSize(width: 460, height: 490)
+            let size = CGSize(width: 460, height: 580)
             let x = left ? rect.minX - size.width + 8 : rect.maxX - 8
             let y = min(screen.maxY - size.height, max(screen.minY, rect.midY - size.height / 2))
             let window = PetPanel(contentRect: CGRect(origin: CGPoint(x: min(screen.maxX - size.width, max(screen.minX, x)), y: y), size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

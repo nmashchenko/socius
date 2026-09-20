@@ -3,47 +3,70 @@ import SwiftUI
 struct PetSettingsView: View {
     @Bindable var model: PetModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Your pet’s name").font(.system(size: 12, weight: .semibold))
+        VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
+            HStack(spacing: PocketMetrics.controlInset) {
+                Text("Pet name").font(.system(size: 12, weight: .semibold))
+                    .frame(width: 76, alignment: .leading)
                 TextField("Mochi", text: $model.name)
-                    .textFieldStyle(.plain).font(.system(size: 14))
-                    .padding(8).background(Palette.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    .modifier(PocketInputStyle())
                     .onChange(of: model.name) { _, value in
                         if value.count > 30 { model.name = String(value.prefix(30)) }
                     }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("Quiet mode", isOn: $model.quiet).toggleStyle(PocketToggleStyle())
-                Text("Less motion and no reminder bubbles. Respects Reduce Motion.")
-                    .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            VStack(alignment: .leading, spacing: PocketMetrics.controlInset) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Quiet mode").font(.system(size: 12, weight: .semibold))
+                        Text("Less motion. No reminder bubbles.")
+                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    }
+                    Spacer()
+                    Toggle("Quiet mode", isOn: $model.quiet)
+                        .toggleStyle(PocketToggleStyle(showsLabel: false)).accessibilityLabel("Quiet mode")
+                }
+                PetShortcutControl(model: model)
             }
-            PetShortcutControl(model: model)
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Show in pocket").font(.system(size: 12, weight: .semibold))
-                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 10) {
+            Divider().opacity(0.4)
+            VStack(alignment: .leading, spacing: PocketMetrics.controlInset) {
+                Text("In your pocket").font(.system(size: 12, weight: .semibold))
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: PocketMetrics.rowGap) {
                     ForEach(PocketTool.allCases.filter { $0 != .settings }) { tool in
-                        Toggle(isOn: Binding(get: { model.showsTool(tool.rawValue) }, set: { visible in
-                            if visible { model.hiddenTools.remove(tool.rawValue) }
-                            else { model.hiddenTools.insert(tool.rawValue) }
-                        })) { Label(tool.rawValue, systemImage: tool.icon) }
-                        .toggleStyle(PocketToggleStyle())
+                        Button {
+                            if model.showsTool(tool.rawValue) { model.hiddenTools.insert(tool.rawValue) }
+                            else { model.hiddenTools.remove(tool.rawValue) }
+                        } label: {
+                            HStack(spacing: PocketMetrics.rowGap) {
+                                Image(systemName: tool.icon).frame(width: 16)
+                                Text(tool.rawValue)
+                                Spacer(minLength: 0)
+                                Image(systemName: model.showsTool(tool.rawValue) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(model.showsTool(tool.rawValue) ? Palette.green : Palette.muted)
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, PocketMetrics.controlInset)
+                            .frame(height: PocketMetrics.controlHeight)
+                            .background(Palette.green.opacity(model.showsTool(tool.rawValue) ? 0.08 : 0.03), in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
+                            .contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .accessibilityLabel(tool.rawValue)
+                            .accessibilityValue(model.showsTool(tool.rawValue) ? "Shown in pocket" : "Hidden from pocket")
+                            .accessibilityAddTraits(model.showsTool(tool.rawValue) ? .isSelected : [])
                     }
                 }
-            }.font(.system(size: 12, weight: .semibold)).tint(Palette.green)
-            HStack {
-                Link(destination: URL(string: "https://github.com/nmashchenko/socius/issues/new")!) {
-                    Label("Report a bug", systemImage: "ladybug")
-                }.help("Opens GitHub so you can review and submit your report.")
-                Spacer()
-                Button { NSApp.terminate(nil) } label: {
-                    Label("Quit Socius", systemImage: "power")
-                }
-            }.buttonStyle(PocketButtonStyle())
-            Text("Quitting closes Socius completely. Open Socius from Applications or Spotlight to bring your pet back.")
-                .font(.system(size: 11)).foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            }
             Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: PocketMetrics.rowGap) {
+                HStack {
+                    Link(destination: URL(string: "https://github.com/nmashchenko/socius/issues/new")!) {
+                        Label("Report a bug", systemImage: "ladybug")
+                    }
+                    Spacer()
+                    Button { NSApp.terminate(nil) } label: { Label("Quit Socius", systemImage: "power") }
+                }.buttonStyle(PocketButtonStyle(compact: true))
+                Text("After quitting, reopen Socius from Applications or Spotlight.")
+                    .font(.system(size: 10)).foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
