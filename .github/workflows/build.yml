@@ -19,7 +19,7 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.1.1.app/Contents/Developer
           swift --version
       - name: Tests
-        run: swift test --disable-sandbox
+        run: swift test --disable-sandbox --no-parallel
       - name: Bundle and verify
         env:
           CODESIGN_IDENTITY: '-'

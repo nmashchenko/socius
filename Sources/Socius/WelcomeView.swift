@@ -15,50 +15,64 @@ private struct WelcomeBackdrop: NSViewRepresentable {
 struct WelcomeView: View {
     let model: PetModel
     let finish: () -> Void
+    var cancel: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var arrived = CommandLine.arguments.contains("--render-preview")
     @State private var greeting = CommandLine.arguments.contains("--render-preview")
+    @State private var step = 0
     @State private var finished = false
     @State private var exiting = false
-    private var gentle: Bool { reduceMotion || model.quiet }
+    private var gentle: Bool { reduceMotion }
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 WelcomeBackdrop().overlay(Palette.cream.opacity(0.25)).ignoresSafeArea()
                     .opacity(exiting ? 0 : 1)
                 VStack(spacing: 8) {
-                    Text("Hello, I’m \(model.displayName).")
+                    Text(step == 0 ? "Hello, I’m \(model.displayName)." : step == 1 ? "A little care. A little help." : "Make me yours.")
                         .font(.system(size: 30, weight: .medium, design: .serif))
-                    Text("Your little desktop helper.\nClick me anytime to see what I can do.")
+                    Text(step == 0 ? "Click me to open your pocket of tools.\nDrag me anywhere; I’ll rest at the nearest edge." : step == 1 ? "Feed me shrimp when I’m hungry; find a pearl when I’m grumpy.\nRight-click for quick actions, sleep, or to quit Socius." : "Pick a color and size. You can change both in Settings.")
                         .font(.system(size: 15)).multilineTextAlignment(.center)
                         .foregroundStyle(Palette.muted)
                 }
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2 - 145)
                 .opacity(greeting && !exiting ? 1 : 0)
-                CreatureView(model: model, size: 140, idleMotion: false, walking: arrived && !gentle)
+                CreatureView(model: model, size: model.metrics.size, idleMotion: greeting && !exiting, walking: arrived && !greeting && !gentle)
                     .offset(x: arrived || gentle ? 0 : -geometry.size.width * 0.6)
                     .opacity(arrived ? 1 : 0)
                     .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
-                    .onTapGesture(perform: complete)
-                Button("Let’s go", action: complete)
-                    .buttonStyle(PocketButtonStyle(prominent: true))
-                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2 + 130)
-                    .opacity(greeting && !exiting ? 1 : 0).disabled(!greeting || finished)
+                    .onTapGesture { if step < 2 { step += 1 } }
+                VStack(spacing: 16) {
+                    if step == 2 {
+                        PetAppearanceControls(model: model).frame(width: 340)
+                    } else if step == 1 {
+                        Text("Summon me at your cursor with \(model.shortcut.label).\nPermissions are only requested when you use a tool that needs them.")
+                            .font(.system(size: 12)).multilineTextAlignment(.center).foregroundStyle(Palette.muted)
+                    } else {
+                        Text("I’ll stay out of your way at the edge. Click me to come back.")
+                            .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    }
+                    HStack(spacing: 12) {
+                        if step > 0 { Button("Back") { step -= 1 }.buttonStyle(PocketButtonStyle()) }
+                        Button(step == 2 ? "Let’s go" : "Next") { if step < 2 { step += 1 } else { complete() } }
+                            .buttonStyle(PocketButtonStyle(prominent: true)).keyboardShortcut(.defaultAction)
+                    }
+                    Text("\(step + 1) of 3").font(.system(size: 10)).foregroundStyle(Palette.muted)
+                }
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2 + 175)
+                .opacity(greeting && !exiting ? 1 : 0).disabled(!greeting || finished)
                 VStack {
                     HStack { Spacer(); Button("Skip", action: complete).buttonStyle(PocketButtonStyle(compact: true)) }
                     Spacer()
                 }.padding(28).opacity(exiting ? 0 : 1)
             }.foregroundStyle(Palette.ink)
         }.preferredColorScheme(.light)
-        .onExitCommand(perform: complete)
+        .onExitCommand(perform: cancel ?? complete)
         .task {
             withAnimation(gentle ? .easeOut(duration: 0.2) : .timingCurve(0.77, 0, 0.175, 1, duration: 1.2)) { arrived = true }
             do {
                 try await Task.sleep(for: .milliseconds(gentle ? 200 : 1200))
                 withAnimation(.easeOut(duration: 0.2)) { greeting = true }
-                guard !finished else { return }
-                try await Task.sleep(for: .seconds(7))
-                complete()
             } catch { }
         }
     }

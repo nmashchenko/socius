@@ -1,6 +1,6 @@
 --- upstream/Services/Support.swift
 +++ socius/Services/Support.swift
-@@ -7,14 +7,34 @@
+@@ -7,14 +7,38 @@
  /// three lines: find the support directory, append the app's name, make sure it
  /// exists. Identical every time, and the kind of thing that stays identical
  /// only until one copy is edited and the others are not.
@@ -13,7 +13,11 @@
 +            .appendingPathComponent(isDevelopment ? "Socius/Development" : "Socius", isDirectory: true)
 +    }
 +    public static var preferences: UserDefaults {
-+        isDevelopment ? UserDefaults(suiteName: "app.socius.desktop.development")! : .standard
++        let developmentID = "app.socius.desktop.development"
++        // Bundled development apps already use this domain as their standard
++        // defaults. macOS rejects creating a suite with the app's own identifier.
++        guard isDevelopment, Bundle.main.bundleIdentifier != developmentID else { return .standard }
++        return UserDefaults(suiteName: developmentID) ?? .standard
 +    }
 +}
 +
@@ -37,7 +41,7 @@
          try? fm.createDirectory(at: url, withIntermediateDirectories: true)
          return url
      }()
-@@ -33,3 +53,8 @@
+@@ -33,3 +57,8 @@
          return url
      }
  }
@@ -48,6 +52,15 @@
 +}
 --- upstream/Services/ConfigStore.swift
 +++ socius/Services/ConfigStore.swift
+@@ -72,7 +72,7 @@
+             } catch {
+                 value = File()
+                 fileBroken = true
+-                NSLog("Cyclop: config.json is not readable: \(error.localizedDescription)")
++                NSLog("Socius: config.json is not readable: \(error.localizedDescription)")
+             }
+         } else {
+             // Nothing on disk yet, so nothing to protect — assembled from
 @@ -139,7 +139,7 @@
      /// do, so a Mac with none of these keys set gets the same defaults as
      /// before and a Mac with some of them set keeps exactly those.
@@ -57,6 +70,15 @@
          var file = File()
          if defaults.object(forKey: "showOnAllDisplays") != nil {
              file.showOnAllDisplays = defaults.bool(forKey: "showOnAllDisplays")
+@@ -182,7 +182,7 @@
+         do {
+             try encoder.encode(file).write(to: Self.file, options: .atomic)
+         } catch {
+-            NSLog("Cyclop: cannot write config.json: \(error.localizedDescription)")
++            NSLog("Socius: cannot write config.json: \(error.localizedDescription)")
+         }
+     }
+
 --- upstream/Services/ShelfStore.swift
 +++ socius/Services/ShelfStore.swift
 @@ -52,7 +52,7 @@
@@ -76,18 +98,411 @@
 +        PocketDefaults.shared.set(items.map(\.url.path), forKey: defaultsKey)
      }
  }
+--- upstream/Services/SnippetStore.swift
++++ socius/Services/SnippetStore.swift
+@@ -74,6 +74,7 @@
+     /// and "read as it is" are different answers, and only the second makes
+     /// writing back safe (#7).
+     @Published private(set) var fileBroken = false
++    @Published private(set) var writeError: String?
+
+     /// Matches the name and the value alike: one remembers an address either by
+     /// what it is called or by what is in it, rarely reliably by both.
+@@ -104,7 +105,7 @@
+         guard let data = try? Data(contentsOf: file) else {
+             // No file is an honest empty list, and writing one is safe.
+             items = []
+-            fileBroken = false
++            fileBroken = FileManager.default.fileExists(atPath: file.path)
+             return
+         }
+         do {
+@@ -116,7 +117,7 @@
+             // say so: silence here is what used to turn a stray comma into a
+             // lost file.
+             fileBroken = true
+-            NSLog("Cyclop: snippets.json is not readable: \(error.localizedDescription)")
++            NSLog("Socius: snippets.json is not readable: \(error.localizedDescription)")
+         }
+     }
+
+@@ -125,47 +126,38 @@
+     /// Re-reads first, because the file is also edited by hand and the copy in
+     /// memory is only as fresh as the last visit to the tab. Writing over it
+     /// blind would silently undo whatever was added in an editor meanwhile.
+-    func add(label: String, text: String) {
++    @discardableResult
++    func add(label: String, text: String) -> Bool {
+         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+-        guard !value.isEmpty else { return }
++        guard !value.isEmpty else { return false }
++        reload()
++        guard !fileBroken else { return false }
+         let snippet = Snippet(label: label.trimmingCharacters(in: .whitespacesAndNewlines), text: value)
+-        reload()
+-        // A file that could not be read must not be written. The snippet is
+-        // dropped rather than kept in memory as if saved: pretending would
+-        // trade a visible refusal now for a silent loss at relaunch.
+-        guard !fileBroken else {
+-            NSLog("Cyclop: refusing to write over an unreadable snippets.json")
+-            return
+-        }
+-        // Only an exact duplicate — same name and same value — is dropped, and
+-        // it is dropped because two identical rows are indistinguishable in the
+-        // list anyway. Two snippets sharing a name but not a value are kept
+-        // apart: see `Snippet.id`.
+-        items.removeAll { $0.id == snippet.id }
+-        items.insert(snippet, at: 0)
+-        persist()
++        var updated = items.filter { $0.id != snippet.id }
++        updated.insert(snippet, at: 0)
++        return persist(updated)
+     }
+
+     func remove(_ snippet: Snippet) {
+-        items.removeAll { $0.id == snippet.id }
+-        persist()
++        reload()
++        guard !fileBroken else { return }
++        _ = persist(items.filter { $0.id != snippet.id })
+     }
+
+     /// Moves a snippet to another position and writes the new order.
+     ///
+-    /// The order is the file's order, so dragging a row is a real edit and not
+-    /// a view-only arrangement — the one people reach for is meant to end up on
+-    /// top and stay there.
+-    ///
+-    /// Unlike `add` and `update`, this does not re-read the file first: a drag
+-    /// is a continuous gesture, and re-reading mid-gesture would swap the list
+-    /// out from under the row being dragged.
++    /// Arrow clicks apply their relative move to the latest file contents.
+     func move(_ snippet: Snippet, to index: Int) {
++        guard let previous = items.firstIndex(where: { $0.id == snippet.id }) else { return }
++        let offset = index - previous
++        reload()
++        guard !fileBroken else { return }
+         guard let current = items.firstIndex(where: { $0.id == snippet.id }) else { return }
+-        let target = max(0, min(index, items.count - 1))
++        let target = max(0, min(current + offset, items.count - 1))
+         guard target != current else { return }
+-        items.insert(items.remove(at: current), at: target)
+-        persist()
++        var updated = items
++        updated.insert(updated.remove(at: current), at: target)
++        _ = persist(updated)
+     }
+
+     /// Edits a snippet in place, keeping its position in the list.
+@@ -178,41 +170,36 @@
+     /// An emptied value cancels the edit rather than deleting the row. Deleting
+     /// already has its own ✕, and losing a snippet to a stray ⌘A is a poor
+     /// trade for saving a press.
+-    func update(_ snippet: Snippet, label: String, text: String) {
++    @discardableResult
++    func update(_ snippet: Snippet, label: String, text: String) -> Bool {
+         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+-        guard !value.isEmpty else { return }
++        guard !value.isEmpty else { return false }
+         let edited = Snippet(label: label.trimmingCharacters(in: .whitespacesAndNewlines), text: value)
+-        guard edited != snippet else { return }
+-
+-        reload()
+-        // A file that could not be read must not be written over.
+-        guard !fileBroken else {
+-            NSLog("Cyclop: refusing to write over an unreadable snippets.json")
+-            return
+-        }
+-        // An edit that turns this row into an exact copy of another one leaves
+-        // a single row, for the same reason `add` does.
+-        items.removeAll { $0.id == edited.id && $0.id != snippet.id }
+-        // Found after the removal, never before it: a copy standing above this
+-        // row shifts it up by one, and an index taken beforehand then points at
+-        // the neighbour. Written there, the edit destroys a snippet nobody
+-        // touched and leaves the edited one exactly as it was.
+-        guard let index = items.firstIndex(where: { $0.id == snippet.id }) else { return }
+-        items[index] = edited
+-        persist()
+-    }
+-
+-    /// Pretty-printed, and slashes left alone: the file is meant to be opened
+-    /// and edited by hand, and `\/` in every URL would be the app making that
+-    /// harder for its own convenience.
+-    private func persist() {
+-        guard !fileBroken else { return }
++        guard edited != snippet else { return true }
++        reload()
++        guard !fileBroken else { return false }
++        var updated = items.filter { $0.id != edited.id || $0.id == snippet.id }
++        guard let index = updated.firstIndex(where: { $0.id == snippet.id }) else {
++            writeError = "This snippet changed outside Socius. Reopen it to edit the latest version."
++            return false
++        }
++        updated[index] = edited
++        return persist(updated)
++    }
++
++    private func persist(_ updated: [Snippet]) -> Bool {
++        guard !fileBroken else { return false }
+         let encoder = JSONEncoder()
+         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+         do {
+-            try encoder.encode(items).write(to: file, options: .atomic)
++            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
++            try encoder.encode(updated).write(to: file, options: .atomic)
++            items = updated
++            writeError = nil
++            return true
+         } catch {
+-            NSLog("Cyclop: cannot write snippets.json: \(error.localizedDescription)")
++            writeError = "Couldn’t save snippets. Keep a copy of your draft before closing this pane. Check file access and try again."
++            return false
+         }
+     }
+
+--- upstream/Services/NoteStore.swift
++++ socius/Services/NoteStore.swift
+@@ -24,12 +24,15 @@
+     /// Which note the editor shows. Lives here rather than in the pane so the
+     /// choice survives the pane being unmounted with the panel.
+     @Published var selected: Note.ID?
+-
+-    private static let file = Support.file("notes.json")
++    @Published private(set) var loadError: String?
++    @Published private(set) var writeError: String?
++    let file: URL
++    private var loadedData: Data?
+
+     private let saves = DebouncedWrite()
+
+-    init() {
++    init(file: URL = Support.file("notes.json")) {
++        self.file = file
+         load()
+     }
+
+@@ -39,6 +42,7 @@
+     /// the order never changes afterwards: a list that reshuffles itself on
+     /// every edit loses the reader's place for tidiness nobody asked for.
+     func add() {
++        guard loadError == nil else { return }
+         let note = Note(id: UUID(), text: "", edited: Date())
+         notes.insert(note, at: 0)
+         selected = note.id
+@@ -46,6 +50,7 @@
+     }
+
+     func update(_ id: Note.ID, text: String) {
++        guard loadError == nil else { return }
+         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+         notes[index].text = text
+         notes[index].edited = Date()
+@@ -53,6 +58,7 @@
+     }
+
+     func remove(_ id: Note.ID) {
++        guard loadError == nil else { return }
+         notes.removeAll { $0.id == id }
+         if selected == id { selected = notes.first?.id }
+         scheduleSave()
+@@ -62,20 +68,29 @@
+     /// sweep themselves out. They cost one hover to recreate, and a trail of
+     /// blank cards is exactly the clutter a scratchpad exists to avoid.
+     func leave() {
++        guard loadError == nil else { return }
++        let previous = notes
+         notes.removeAll { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+         if let selected, !notes.contains(where: { $0.id == selected }) {
+             self.selected = notes.first?.id
+         }
++        if notes != previous { scheduleSave() }
+         flush()
+     }
+
+     // MARK: - Persistence
+
+     private func load() {
+-        guard let data = try? Data(contentsOf: Self.file),
+-              let stored = try? JSONDecoder().decode([Note].self, from: data) else { return }
+-        notes = stored
+-        selected = notes.first?.id
++        do {
++            let data = try Data(contentsOf: file)
++            notes = try JSONDecoder().decode([Note].self, from: data)
++            loadedData = data
++            selected = notes.first?.id
++        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
++            // Only an absent file is a safe empty store.
++        } catch {
++            loadError = "Couldn’t read notes.json. Your saved file is unchanged. Open it to check its contents and access, then reopen Socius."
++        }
+     }
+
+     /// A moment after the typing pauses, not on every keystroke: the text
+@@ -87,11 +102,25 @@
+
+     func flush() { saves.flush() }
+
++    func reveal() { NSWorkspace.shared.activateFileViewerSelecting([file]) }
++
+     private func persist() {
++        guard loadError == nil else { return }
+         do {
+-            try JSONEncoder().encode(notes).write(to: Self.file, options: .atomic)
++            let current: Data?
++            do { current = try Data(contentsOf: file) }
++            catch let error as CocoaError where error.code == .fileReadNoSuchFile { current = nil }
++            guard current == loadedData else {
++                writeError = "notes.json changed outside Socius. Copy your unsaved text before reopening the app; the saved file has not been overwritten."
++                return
++            }
++            let data = try JSONEncoder().encode(notes)
++            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
++            try data.write(to: file, options: .atomic)
++            loadedData = data
++            writeError = nil
+         } catch {
+-            NSLog("Cyclop: cannot write notes.json: \(error.localizedDescription)")
++            writeError = "Couldn’t save notes. Your edits remain in this session. Check file access and keep a copy before quitting."
+         }
+     }
+ }
+--- upstream/Services/ClipboardStore.swift
++++ socius/Services/ClipboardStore.swift
+@@ -48,7 +48,9 @@
+     var wantsImages: () -> Bool = { true }
+
+     private var timer: Timer?
+-    private var lastChangeCount = NSPasteboard.general.changeCount
++    private let pasteboard: NSPasteboard
++    private var lastChangeCount: Int
++    private var generation = 0
+     private let limit = 40
+     /// Types an app sets to keep a copy out of history tools. Presence is what
+     /// counts, not content: a type can be declared with data that is still on
+@@ -61,8 +63,14 @@
+         .init("org.nspasteboard.AutoGeneratedType"),
+     ]
+
++    init(pasteboard: NSPasteboard = .general) {
++        self.pasteboard = pasteboard
++        lastChangeCount = pasteboard.changeCount
++    }
++
+     func start() {
+-        stop()
++        guard timer == nil else { return }
++        lastChangeCount = pasteboard.changeCount
+         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+             MainActor.assumeIsolated { self?.poll() }
+         }
+@@ -75,11 +83,13 @@
+     }
+
+     func stop() {
++        generation &+= 1
+         timer?.invalidate()
+         timer = nil
+     }
+
+     func clear() {
++        generation &+= 1
+         items.removeAll()
+     }
+
+@@ -89,7 +99,6 @@
+
+     /// Puts an entry back on the pasteboard without re-recording it.
+     func copy(_ item: ClipItem) {
+-        let pasteboard = NSPasteboard.general
+         pasteboard.clearContents()
+         switch item.payload {
+         case .text(let string):
+@@ -106,7 +115,7 @@
+     }
+
+     private func poll() {
+-        let pasteboard = NSPasteboard.general
++        guard timer != nil else { return }
+         guard pasteboard.changeCount != lastChangeCount else { return }
+         lastChangeCount = pasteboard.changeCount
+
+@@ -136,7 +145,7 @@
+             // would drop the screenshot for good, because the counter has
+             // already been marked as seen. Wait for it instead.
+             if pasteboard.availableType(from: [.png, .tiff]) != nil {
+-                awaitImage(at: pasteboard.changeCount, attempt: 0)
++                awaitImage(at: pasteboard.changeCount, attempt: 0, generation: generation)
+                 return
+             }
+         }
+@@ -152,12 +161,12 @@
+     /// on: a copy made in the meantime is the newer intention, and finishing a
+     /// transfer the user has already replaced would put the wrong thing on the
+     /// shelf.
+-    private func awaitImage(at changeCount: Int, attempt: Int) {
++    private func awaitImage(at changeCount: Int, attempt: Int, generation: Int) {
++        guard timer != nil, self.generation == generation, wantsImages() else { return }
+         // Out of patience. Something declared a picture and never produced one,
+         // so fall back to what else was on the pasteboard — otherwise a copy
+         // that merely offered an image alongside its text would go unrecorded.
+         guard attempt < 12 else {
+-            let pasteboard = NSPasteboard.general
+             guard pasteboard.changeCount == changeCount,
+                   let string = pasteboard.string(forType: .string),
+                   !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+@@ -166,14 +175,14 @@
+         }
+         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+             MainActor.assumeIsolated {
+-                guard let self else { return }
+-                let pasteboard = NSPasteboard.general
++                guard let self, self.timer != nil, self.generation == generation, self.wantsImages() else { return }
++                let pasteboard = self.pasteboard
+                 guard pasteboard.changeCount == changeCount else { return }
+                 if let png = self.pngFromPasteboard(pasteboard) {
+                     self.onImage?(png)
+                     return
+                 }
+-                self.awaitImage(at: changeCount, attempt: attempt + 1)
++                self.awaitImage(at: changeCount, attempt: attempt + 1, generation: generation)
+             }
+         }
+     }
+--- upstream/Services/ScreenshotVault.swift
++++ socius/Services/ScreenshotVault.swift
+@@ -10,6 +10,7 @@
+     /// Desktop or Documents it is not behind a TCC prompt. Falls back to the
+     /// app's own support folder, which always works.
+     static let folder: URL = {
++        if Support.isPreview || SociusStorage.isDevelopment { return Support.directory("Screenshots") }
+         let fm = FileManager.default
+         let pictures = fm.homeDirectoryForCurrentUser
+             .appendingPathComponent("Pictures", isDirectory: true)
+@@ -40,7 +41,7 @@
+             try png.write(to: url, options: .atomic)
+             return url
+         } catch {
+-            NSLog("Cyclop: failed to save image: \(error.localizedDescription)")
++            NSLog("Socius: failed to save image: \(error.localizedDescription)")
+             return nil
+         }
+     }
 --- upstream/Services/ScreenshotFolderWatcher.swift
 +++ socius/Services/ScreenshotFolderWatcher.swift
-@@ -16,6 +16,8 @@
+@@ -16,6 +16,11 @@
  final class ScreenshotFolderWatcher {
      /// A new screenshot file, ready to go on the shelf.
      var onImage: ((URL) -> Void)?
 +    var onAccessError: (() -> Void)?
++    var onStateChanged: (() -> Void)?
++    private(set) var activeFolder: URL?
++    private var generation = 0
 +    private var accessPanel: NSOpenPanel?
 
      private let enabledKey = "screenshotFolderWatch.enabled"
      private let pathKey = "screenshotFolderWatch.path"
-@@ -27,11 +29,11 @@
+@@ -27,11 +32,11 @@
      private var seen: Set<String> = []
 
      var isEnabled: Bool {
@@ -101,7 +516,7 @@
      }
 
      /// Where `screencapture` saves files today — read the same preference it
-@@ -48,10 +50,13 @@
+@@ -48,10 +53,13 @@
      /// Puts up the Open panel that stands in for a Privacy prompt. Starts
      /// watching immediately on approval; changes nothing on cancel.
      func requestAccess(completion: @escaping (Bool) -> Void) {
@@ -116,7 +531,7 @@
          )
          panel.prompt = localized("Watch")
          panel.canChooseDirectories = true
-@@ -60,30 +65,40 @@
+@@ -60,46 +68,62 @@
          panel.allowsMultipleSelection = false
          panel.directoryURL = Self.systemLocation
          panel.begin { [weak self] response in
@@ -164,8 +579,12 @@
          stop()
      }
 
-@@ -92,12 +107,15 @@
+     func stop() {
+         source?.cancel()
          source = nil
++        generation += 1
++        activeFolder = nil
++        onStateChanged?()
      }
 
 -    private func start(at folder: URL) {
@@ -182,19 +601,98 @@
 +        stop()
 +        seen = names
          let source = DispatchSource.makeFileSystemObjectSource(
-             fileDescriptor: fd, eventMask: .write, queue: .main
+-            fileDescriptor: fd, eventMask: .write, queue: .main
++            fileDescriptor: fd, eventMask: [.write, .delete, .rename, .revoke], queue: .main
          )
-@@ -112,6 +130,7 @@
+         // Очередь здесь — главная, и это условие работоспособности, а не
+         // удобство. Замыкание, записанное внутри `@MainActor`-типа, изоляцию
+@@ -108,23 +132,42 @@
+         // каждом вызове. С фоновой очередью проверка не прошла бы, и процесс
+         // снимался бы на первом же изменении папки. Менять `queue` без
+         // `@Sendable` на обоих обработчиках нельзя.
+-        source.setEventHandler { [weak self] in self?.scan(folder) }
++        let currentGeneration = generation
++        source.setEventHandler { [weak self] in
++            guard let self, self.generation == currentGeneration, let source = self.source else { return }
++            if !source.data.intersection([.delete, .rename, .revoke]).isEmpty {
++                self.disable()
++                self.onAccessError?()
++                return
++            }
++            self.scan(folder)
++        }
          source.setCancelHandler { close(fd) }
          source.resume()
          self.source = source
++        activeFolder = folder
++        onStateChanged?()
 +        return true
      }
 
      /// A directory `.write` event fires for any change to its listing — new
+     /// file, rename, delete — so this diffs against `seen` rather than
+     /// trusting the event to mean "a screenshot arrived".
+     private func scan(_ folder: URL) {
+-        for url in entries(in: folder) {
++        guard let urls = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
++            stop()
++            PocketDefaults.shared.set(false, forKey: enabledKey)
++            onAccessError?()
++            return
++        }
++        seen.formIntersection(urls.map(\.lastPathComponent))
++        for url in urls {
+             let name = url.lastPathComponent
+             guard !seen.contains(name) else { continue }
+             seen.insert(name)
+             guard let type = UTType(filenameExtension: url.pathExtension),
+                   type.conforms(to: .image) else { continue }
+-            waitForStableSize(url, lastSize: -1, attempt: 0)
++            waitForStableSize(url, lastSize: -1, attempt: 0, generation: generation)
+         }
+     }
+
+@@ -132,7 +175,8 @@
+     /// steady size costs nothing and guards against a half-written file on a
+     /// slow volume — the same caution `ClipboardStore.awaitImage` uses for
+     /// screenshots arriving over Continuity.
+-    private func waitForStableSize(_ url: URL, lastSize: Int, attempt: Int) {
++    private func waitForStableSize(_ url: URL, lastSize: Int, attempt: Int, generation: Int) {
++        guard generation == self.generation, source != nil else { return }
+         guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int else {
+             return
+         }
+@@ -142,13 +186,8 @@
+         }
+         guard attempt < 10 else { return }
+         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+-            self?.waitForStableSize(url, lastSize: size, attempt: attempt + 1)
++            self?.waitForStableSize(url, lastSize: size, attempt: attempt + 1, generation: generation)
+         }
+     }
+
+-    private func entries(in folder: URL) -> [URL] {
+-        (try? FileManager.default.contentsOfDirectory(
+-            at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+-        )) ?? []
+-    }
+ }
 --- upstream/Services/MediaController.swift
 +++ socius/Services/MediaController.swift
-@@ -14,12 +14,51 @@
+@@ -1,10 +1,10 @@
+ import AppKit
+
+-/// Now Playing for whatever the system is playing — browser tabs included.
++/// Spotify playback, using the system feed when Spotify owns Now Playing.
+ ///
+ /// Primary source is `NowPlayingFeed`, which reaches MediaRemote through a
+ /// helper hosted by `/usr/bin/perl`. If that route ever closes, the controller
+-/// falls back to scripting Apple Music and Spotify directly.
++/// reads Spotify directly if another app owns the session or the helper fails.
+ @MainActor
+ final class MediaController: ObservableObject {
+     struct Track: Equatable {
+@@ -14,24 +14,64 @@
          var key: String
      }
 
@@ -210,10 +708,20 @@
      @Published private(set) var duration: TimeInterval = 0
      @Published private(set) var position: TimeInterval = 0
      @Published private(set) var sourceName: String?
+-    /// Whether the player accepts skipping at all. A browser tab playing one
+-    /// video registers no handler for it — the command leaves and nothing
+-    /// happens — so the buttons go dim rather than dead, the way the system's
+-    /// own Now Playing widget dims them for the same session. True until told
+-    /// otherwise: the scripted fallback below drives Music and Spotify, and
+-    /// both skip fine.
++    @Published private(set) var readError: String?
 +    @Published var volume: Double = 0.5
 +    @Published private(set) var volumeAvailable = false
 +    var volumeLabel: String { "System volume" }
-+    init() {
++    init(readSpotify: @escaping (@escaping (Result<PlayerState?, PlayerBridge.ReadError>) -> Void) -> Void = {
++        PlayerBridge.stateResult(of: .spotify, completion: $0)
++    }) {
++        self.readSpotify = readSpotify
 +        if ProcessInfo.processInfo.arguments.contains("--render-preview") {
 +            track = Track(title: "Midnight City", artist: "M83", album: "", key: "preview")
 +            isPlaying = true; duration = 244; position = 87; volumeAvailable = true
@@ -243,43 +751,145 @@
 +            if value == nil { self?.refreshVolume() }
 +        }
 +    }
-     /// Whether the player accepts skipping at all. A browser tab playing one
-     /// video registers no handler for it — the command leaves and nothing
-     /// happens — so the buttons go dim rather than dead, the way the system's
-@@ -44,6 +83,7 @@
++    /// Use Spotify's reported capabilities when available.
+     @Published private(set) var canSkip = true
+
+     private let feed = NowPlayingFeed()
+     private var feedAvailable = true
+-
+-    private var activeApp: PlayerApp?
++    private var usingSpotifyScript = false
++    private let readSpotify: (@escaping (Result<PlayerState?, PlayerBridge.ReadError>) -> Void) -> Void
++    private var stateRequest: UUID?
++
+     private var artworkKey: String?
+     private var anchor: (position: TimeInterval, at: Date)?
+     /// Where we asked the player to jump, and when — see `apply`.
+@@ -40,16 +80,30 @@
+     private var observers: [Any] = []
+     /// Whether the panel is open — the ticker below runs only then.
+     private var isActive = false
++    private var started = false
+
      // MARK: - Lifecycle
 
      func start() {
-+        guard spotifyInstalled else { return }
++        guard spotifyInstalled, !started else { return }
++        started = true
++        feedAvailable = true
          feed.onUpdate = { [weak self] snapshot in self?.apply(snapshot) }
          feed.onUnavailable = { [weak self] in self?.switchToScriptingFallback() }
          feed.start()
-@@ -67,6 +107,11 @@
++        let center = DistributedNotificationCenter.default()
++        observers.append(center.addObserver(forName: PlayerApp.spotify.changeNotification, object: nil, queue: .main) { [weak self] _ in
++            MainActor.assumeIsolated {
++                guard let self, self.isActive else { return }
++                self.refreshFromPlayers()
++            }
++        })
+     }
+
+     func stop() {
++        started = false
++        isActive = false
++        stateRequest = nil
+         feed.stop()
+         observers.forEach { DistributedNotificationCenter.default().removeObserver($0) }
+         observers.removeAll()
+@@ -65,14 +119,27 @@
+     /// whatever drifted a beat later.
+     func setActive(_ active: Bool) {
          isActive = active
++        if !active { stateRequest = nil }
          updateTicker()
          guard active else { return }
 +        let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
-+        if installed && !spotifyInstalled { spotifyInstalled = true; start() }
 +        spotifyInstalled = installed
 +        guard installed else { clear(); return }
++        start()
 +        refreshVolume()
          tick()
          if feedAvailable {
              feed.refresh()
-@@ -116,20 +161,22 @@
-         } else if let activeApp {
-             script(activeApp)
-         } else {
--            PlayerBridge.postMediaKey(key.rawValue)
-+            return // Never send a global media key to an unrelated player.
+-        } else {
++        }
++        if !feedAvailable || usingSpotifyScript {
+             refreshFromPlayers()
          }
++    }
++
++    func retrySpotify() {
++        guard isActive else { return }
++        readError = nil
++        refreshFromPlayers()
+     }
+
+     // MARK: - Transport
+@@ -81,17 +148,16 @@
+         // Optimistic flip so the button feels instant; the feed corrects it.
+         isPlaying.toggle()
+         setAnchor(position)
+-        // The per-client command set has no toggle of its own (#23) — Play
+-        // and Pause are sent explicitly, by the state just flipped to above.
+-        dispatch(feed: isPlaying ? .play : .pause, script: { PlayerBridge.playPause($0) }, key: .playPause)
++        // Explicitly target Spotify even if another app now owns Now Playing.
++        PlayerBridge.playPause(.spotify)
+     }
+
+     func next() {
+-        dispatch(feed: .next, script: { PlayerBridge.next($0) }, key: .next)
++        PlayerBridge.next(.spotify)
+     }
+
+     func previous() {
+-        dispatch(feed: .previous, script: { PlayerBridge.previous($0) }, key: .previous)
++        PlayerBridge.previous(.spotify)
+     }
+
+     func seek(to seconds: TimeInterval) {
+@@ -99,37 +165,32 @@
+         let clamped = min(max(0, seconds), duration)
+         setAnchor(clamped)
+         pendingSeek = (clamped, Date())
+-        if feedAvailable {
+-            feed.seek(to: clamped)
+-        } else if let activeApp {
+-            PlayerBridge.seek(activeApp, to: clamped)
+-        }
+-    }
+-
+-    private func dispatch(
+-        feed command: NowPlayingFeed.Command,
+-        script: (PlayerApp) -> Void,
+-        key: PlayerBridge.MediaKey
+-    ) {
+-        if feedAvailable {
+-            feed.send(command)
+-        } else if let activeApp {
+-            script(activeApp)
+-        } else {
+-            PlayerBridge.postMediaKey(key.rawValue)
+-        }
++        // Always address Spotify explicitly. The system player can change
++        // between a snapshot and a button press (for example, to an Arc tab).
++        PlayerBridge.seek(.spotify, to: clamped)
      }
 
      // MARK: - Feed
 
-     private func apply(_ snapshot: NowPlayingFeed.Snapshot) {
+-    private func apply(_ snapshot: NowPlayingFeed.Snapshot) {
 -        guard !snapshot.isEmpty else { return clear() }
-+        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else { return clear() }
++    func apply(_ snapshot: NowPlayingFeed.Snapshot) {
++        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else {
++            usingSpotifyScript = true
++            InteractionTrace.record("media system source=otherOrEmpty; query Spotify directly=\(isActive)")
++            if isActive { refreshFromPlayers() }
++            return
++        }
++        usingSpotifyScript = false
++        stateRequest = nil
++        readError = nil
++        InteractionTrace.record("media Spotify system snapshot playing=\(snapshot.isPlaying) track=true")
 
          let key = "\(snapshot.title)|\(snapshot.artist)|\(snapshot.album)"
          track = Track(title: snapshot.title, artist: snapshot.artist, album: snapshot.album, key: key)
@@ -291,31 +901,293 @@
          // Both directions travel together: no player has ever offered one
          // without the other, and two separately dimmed arrows would read as
          // a glitch rather than a limit.
-@@ -203,7 +250,7 @@
-         NSLog("Cyclop: Now Playing helper unavailable, falling back to Music/Spotify scripting")
+@@ -179,7 +240,6 @@
+     }
 
-         let center = DistributedNotificationCenter.default()
+     private func clear() {
+-        activeApp = nil
+         track = nil
+         artwork = nil
+         artworkKey = nil
+@@ -191,37 +251,40 @@
+         updateTicker()
+     }
+
+-    // MARK: - Fallback: scriptable players only
++    // MARK: - Direct Spotify reads
+
+     private func switchToScriptingFallback() {
+         guard feedAvailable else { return }
+         feedAvailable = false
+-        // Nothing reports supported commands on this route, and the two apps it
+-        // drives both skip — so the arrows come back rather than staying dim
+-        // on a state no longer being refreshed.
++        usingSpotifyScript = true
+         canSkip = true
+-        NSLog("Cyclop: Now Playing helper unavailable, falling back to Music/Spotify scripting")
+-
+-        let center = DistributedNotificationCenter.default()
 -        for app in PlayerApp.allCases {
-+        for app in [PlayerApp.spotify] {
-             observers.append(center.addObserver(
-                 forName: app.changeNotification, object: nil, queue: .main
-             ) { [weak self] _ in
-@@ -217,7 +264,7 @@
+-            observers.append(center.addObserver(
+-                forName: app.changeNotification, object: nil, queue: .main
+-            ) { [weak self] _ in
+-                MainActor.assumeIsolated {
+-                    self?.activeApp = app
+-                    self?.refreshFromPlayers()
+-                }
+-            })
+-        }
++        NSLog("Socius: Now Playing helper unavailable, falling back to Spotify scripting")
++
+         refreshFromPlayers()
      }
 
      private func refreshFromPlayers() {
 -        PlayerBridge.currentState { [weak self] state in
-+        PlayerBridge.state(of: .spotify) { [weak self] state in
-             guard let self else { return }
+-            guard let self else { return }
++        guard isActive, stateRequest == nil else { return }
++        let request = UUID()
++        stateRequest = request
++        readSpotify { [weak self] result in
++            guard let self, self.isActive, self.stateRequest == request else { return }
++            self.stateRequest = nil
++            let state: PlayerState?
++            switch result {
++            case .success(let value):
++                state = value
++                self.readError = nil
++                InteractionTrace.record("media direct Spotify track=\(value != nil) playing=\(value?.isPlaying == true)")
++            case .failure(let error):
++                self.clear()
++                self.readError = error.message
++                InteractionTrace.record("media direct Spotify failed: \(error)")
++                return
++            }
              guard let state else { return self.clear() }
+
+-            self.activeApp = state.app
++            self.canSkip = true
+             self.sourceName = state.app.displayName
+             self.track = Track(title: state.title, artist: state.artist, album: state.album, key: state.key)
+             self.isPlaying = state.isPlaying
+--- upstream/Services/PlayerBridge.swift
++++ socius/Services/PlayerBridge.swift
+@@ -52,15 +52,30 @@
+ /// happens on `queue` and in `URLSession`, and only the answer comes home.
+ @MainActor
+ enum PlayerBridge {
+-    private static let queue = DispatchQueue(label: "com.cyclop.applescript", qos: .utility)
++    enum ReadError: Error, Equatable {
++        case scripting(Int)
++        var message: String {
++            switch self {
++            case .scripting(-1743): "Allow Socius to control Spotify in System Settings → Privacy & Security → Automation, then retry."
++            default: "Couldn’t read Spotify. Open the desktop app and retry."
++            }
++        }
++    }
++    private static let queue = DispatchQueue(label: "app.socius.applescript", qos: .utility)
+
+     // MARK: - State
+
+     static func state(of app: PlayerApp, completion: @escaping (PlayerState?) -> Void) {
+-        guard app.isRunning else { return completion(nil) }
+-        runScript(stateScript(for: app)) { descriptor in
+-            guard let raw = descriptor?.stringValue, !raw.isEmpty else { return completion(nil) }
+-            completion(parse(raw, app: app))
++        stateResult(of: app) { result in completion(try? result.get()) }
++    }
++
++    static func stateResult(of app: PlayerApp, completion: @escaping (Result<PlayerState?, ReadError>) -> Void) {
++        guard app.isRunning else { return completion(.success(nil)) }
++        runScriptResult(stateScript(for: app)) { result in
++            completion(result.map { descriptor in
++                guard let raw = descriptor?.stringValue, !raw.isEmpty else { return nil }
++                return parse(raw, app: app)
++            })
+         }
+     }
+
+@@ -181,7 +196,8 @@
+                         set pos to 0
+                     end try
+                     return pstate & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (duration of t) & sep & pos & sep & (artwork url of t)
+-                on error
++                on error errorMessage number errorNumber
++                    if errorNumber is -1743 then error number errorNumber
+                     return ""
+                 end try
+             end tell
+@@ -199,7 +215,8 @@
+                         set pos to 0
+                     end try
+                     return pstate & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (round ((duration of t) * 1000)) & sep & pos & sep & ""
+-                on error
++                on error errorMessage number errorNumber
++                    if errorNumber is -1743 then error number errorNumber
+                     return ""
+                 end try
+             end tell
+@@ -224,13 +241,19 @@
+
+     /// Shared AppleScript runner: one serial queue for every script the app sends.
+     static func runScript(_ source: String, completion: @escaping @MainActor (NSAppleEventDescriptor?) -> Void) {
++        runScriptResult(source) { result in completion(try? result.get()) }
++    }
++
++    private static func runScriptResult(_ source: String, completion: @escaping @MainActor (Result<NSAppleEventDescriptor?, ReadError>) -> Void) {
+         queue.async {
+             var error: NSDictionary?
+             let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
+             if let error, let code = error[NSAppleScript.errorNumber] as? Int, code != 0 {
+-                NSLog("Cyclop: AppleScript error \(code): \(error[NSAppleScript.errorMessage] ?? "")")
+-            }
+-            DispatchQueue.main.async { MainActor.assumeIsolated { completion(result) } }
++                NSLog("Socius: AppleScript error %d", code)
++                DispatchQueue.main.async { MainActor.assumeIsolated { completion(.failure(.scripting(code))) } }
++            } else {
++                DispatchQueue.main.async { MainActor.assumeIsolated { completion(.success(result)) } }
++            }
+         }
+     }
+ }
+--- upstream/Services/NowPlayingFeed.swift
++++ socius/Services/NowPlayingFeed.swift
+@@ -47,9 +47,12 @@
+
+     private var process: Process?
+     private var input: FileHandle?
++    private var output: FileHandle?
++    private var restart: Task<Void, Never>?
++    private var generation = 0
+     private var buffer = Data()
+     private var failures = 0
+-    private var stopped = false
++    private var stopped = true
+
+     private var helperPath: String? {
+         Bundle.main.path(forResource: "libcyclopmedia", ofType: "dylib")
+@@ -58,15 +61,31 @@
+     // MARK: - Lifecycle
+
+     func start() {
++        guard stopped else { return }
+         stopped = false
++        failures = 0
++        buffer.removeAll()
++        generation &+= 1
+         launch()
+     }
+
+     func stop() {
+         stopped = true
++        generation &+= 1
++        restart?.cancel()
++        restart = nil
++        process?.terminationHandler = nil
++        if process?.isRunning == true { process?.terminate() }
++        cleanUp()
++    }
++
++    private func cleanUp() {
++        output?.readabilityHandler = nil
++        try? input?.close()
++        output = nil
+         input = nil
+-        process?.terminate()
+         process = nil
++        buffer.removeAll()
+     }
+
+     private func launch() {
+@@ -89,6 +108,7 @@
+         task.standardOutput = output
+         task.standardInput = commands
+         task.standardError = FileHandle.nullDevice
++        let currentGeneration = generation
+
+         // `@Sendable` здесь написан, а не выведен, и это не украшение.
+         //
+@@ -107,30 +127,39 @@
+         // там же, где был, — внутри `Task`.
+         output.fileHandleForReading.readabilityHandler = { @Sendable [weak self] handle in
+             let chunk = handle.availableData
+-            guard !chunk.isEmpty else { return }
+-            Task { @MainActor in self?.consume(chunk) }
+-        }
+-
+-        task.terminationHandler = { @Sendable [weak self] _ in
+-            Task { @MainActor in self?.handleTermination() }
++            guard !chunk.isEmpty else { handle.readabilityHandler = nil; return }
++            Task { @MainActor in
++                guard let self, !self.stopped, self.generation == currentGeneration else { return }
++                self.consume(chunk)
++            }
++        }
++
++        task.terminationHandler = { @Sendable [weak self] task in
++            Task { @MainActor in
++                guard let self, self.generation == currentGeneration, self.process === task else { return }
++                self.handleTermination()
++            }
+         }
+
+         do {
+             try task.run()
+         } catch {
+-            NSLog("Cyclop: helper failed to launch: \(error.localizedDescription)")
++            output.fileHandleForReading.readabilityHandler = nil
++            task.terminationHandler = nil
++            try? commands.fileHandleForWriting.close()
++            NSLog("Socius: helper failed to launch: \(error.localizedDescription)")
+             onUnavailable?()
+             return
+         }
+
+         process = task
++        self.output = output.fileHandleForReading
+         input = commands.fileHandleForWriting
+     }
+
+     private func handleTermination() {
+         guard !stopped else { return }
+-        process = nil
+-        input = nil
++        cleanUp()
+         failures += 1
+         // Three straight crashes means the route is gone — perl removed, or the
+         // daemon closed to platform binaries too. Let the caller fall back.
+@@ -138,7 +167,12 @@
+             onUnavailable?()
+             return
+         }
+-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.launch() }
++        let currentGeneration = generation
++        restart = Task { [weak self] in
++            do { try await Task.sleep(for: .seconds(2)) } catch { return }
++            guard let self, self.generation == currentGeneration else { return }
++            self.launch()
++        }
+     }
+
+     // MARK: - Commands
+@@ -154,7 +188,7 @@
+         do {
+             try input.write(contentsOf: data)
+         } catch {
+-            NSLog("Cyclop: helper write failed: \(error.localizedDescription)")
++            NSLog("Socius: helper write failed: \(error.localizedDescription)")
+         }
+     }
 
 --- upstream/UI/Theme.swift
 +++ socius/UI/Theme.swift
-@@ -1,6 +1,19 @@
+@@ -1,6 +1,20 @@
  import SwiftUI
 
 +/// Shared layout scale for Socius and its imported pocket panes.
 +public enum PocketMetrics {
++    public static let inputFill = Color(red: 0.37, green: 0.47, blue: 0.31).opacity(0.08)
 +    public static let small: CGFloat = 6
 +    public static let rowGap: CGFloat = 8
 +    public static let controlInset: CGFloat = 12
@@ -331,7 +1203,7 @@
      static let openAnimation = Animation.spring(response: 0.27, dampingFraction: 0.82)
      static let contentAnimation = Animation.easeOut(duration: 0.16)
      /// Pane switching: the outgoing pane leaves faster than the incoming one
-@@ -15,11 +28,11 @@
+@@ -15,11 +29,11 @@
      static let openTopRadius: CGFloat = 12
      static let openBottomRadius: CGFloat = 22
 
@@ -348,7 +1220,7 @@
  }
 
  /// Flat, focus-free button used for every control in the panel.
-@@ -30,7 +43,7 @@
+@@ -30,7 +44,7 @@
      func makeBody(configuration: Configuration) -> some View {
          configuration.label
              .font(.system(size: prominent ? 17 : 13, weight: .medium))
@@ -357,7 +1229,7 @@
              .frame(width: size, height: size)
              .background(
                  Circle().fill(prominent ? Theme.surfaceHover : Color.clear)
-@@ -59,7 +72,7 @@
+@@ -59,7 +73,7 @@
              configuration.isOn.toggle()
          } label: {
              Capsule()
@@ -509,11 +1381,13 @@
                  .fill(hovering ? Theme.surfaceHover : Theme.surface)
 --- upstream/UI/SnippetsPane.swift
 +++ socius/UI/SnippetsPane.swift
-@@ -11,17 +11,16 @@
+@@ -10,18 +10,20 @@
+     /// them can be typed into at a time and the pane switches between them.
      private enum Field { case search, label, text }
 
-     @FocusState private var focused: Field?
+-    @FocusState private var focused: Field?
 -    @State private var isAdding = false
++    @State private var focused: Field?
 +    @State private var isAdding = ProcessInfo.processInfo.arguments.contains("--snippet-editor")
      @State private var draftLabel = ""
      @State private var draftText = ""
@@ -523,22 +1397,51 @@
 +        VStack(spacing: 10) {
              if isAdding { editor } else { search }
              if snippets.fileBroken { brokenNotice }
++            if let error = snippets.writeError {
++                Text(error).font(.system(size: 11)).foregroundStyle(Theme.secondary)
++            }
              list
          }
 -        .padding(.top, 2)
          .onChange(of: wantsKeyboard) { _, wants in
              guard !wants else {
                  focused = isAdding ? .text : .search
-@@ -42,7 +41,7 @@
-             TextField("", text: $snippets.query)
-                 .textFieldStyle(.plain)
-                 .font(.system(size: 11))
+@@ -39,16 +41,9 @@
+             Image(systemName: "magnifyingglass")
+                 .font(.system(size: 10, weight: .medium))
+                 .foregroundStyle(Theme.tertiary)
+-            TextField("", text: $snippets.query)
+-                .textFieldStyle(.plain)
+-                .font(.system(size: 11))
 -                .foregroundStyle(.white)
-+                .foregroundStyle(Theme.ink)
-                 .tint(Theme.secondary)
-                 .focused($focused, equals: .search)
-                 .onKeyPress(.escape) {
-@@ -106,60 +105,42 @@
+-                .tint(Theme.secondary)
+-                .focused($focused, equals: .search)
+-                .onKeyPress(.escape) {
+-                    snippets.query = ""
+-                    return .handled
+-                }
++            SnippetInput(placeholder: "Search snippets", text: $snippets.query, focused: focused == .search,
++                         onFocus: { focused = .search }, submit: beginAdding,
++                         cancel: { snippets.query = "" })
+             if !snippets.query.isEmpty {
+                 Button { snippets.query = "" } label: {
+                     Image(systemName: "xmark")
+@@ -69,13 +64,12 @@
+             .help(localized("Add a snippet"))
+         }
+         .padding(.horizontal, 9)
+-        .frame(height: 24)
++        .frame(height: PocketMetrics.controlHeight)
+         .background(
+             RoundedRectangle(cornerRadius: 7, style: .continuous)
+                 .fill(Theme.surface)
+         )
+         .contentShape(Rectangle())
+-        .onTapGesture { focused = .search }
+         // Same reason as the editor: the row asks for the caret once it is
+         // actually on screen, so arriving on the tab and coming back from the
+         // editor both land the same way.
+@@ -106,61 +100,40 @@
      /// is two rows tall in a panel that never resizes, and one of the two is
      /// the list.
      private var editor: some View {
@@ -575,12 +1478,14 @@
 -                .onSubmit { commit() }
 +        HStack(spacing: PocketMetrics.rowGap) {
 +            SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focused == .label,
-+                             onFocus: { focused = .label }, submit: commit)
++                             onFocus: { focused = .label }, submit: commit, cancel: cancelAdding)
 +                .frame(width: 92, height: PocketMetrics.controlHeight)
++                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
 +
 +            SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focused == .text,
-+                             onFocus: { focused = .text }, submit: commit)
++                             onFocus: { focused = .text }, submit: commit, cancel: cancelAdding)
 +                .frame(height: PocketMetrics.controlHeight)
++                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
 
              Button { commit() } label: {
                  Image(systemName: "checkmark")
@@ -608,16 +1513,34 @@
          }
 -        .padding(.horizontal, 6)
 -        .frame(height: 28)
-+        .padding(.horizontal, 4)
-+        .frame(height: PocketMetrics.controlHeight)
-         .background(
-             RoundedRectangle(cornerRadius: 7, style: .continuous)
+-        .background(
+-            RoundedRectangle(cornerRadius: 7, style: .continuous)
 -                .fill(Theme.surfaceHover)
-+                .fill(Theme.ink.opacity(0.065))
-         )
+-        )
++        .frame(height: PocketMetrics.controlHeight)
          // Asked for here rather than where the editor is switched on: at that
          // moment this field does not exist yet, and a focus request aimed at a
-@@ -270,7 +251,7 @@
+         // view that is not in the hierarchy is simply dropped. The row would
+@@ -197,7 +170,7 @@
+
+     private func commit() {
+         guard !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+-        snippets.add(label: draftLabel, text: draftText)
++        guard snippets.add(label: draftLabel, text: draftText) else { return }
+         // Straight into another one: adding snippets comes in runs, and the
+         // list underneath already shows what has landed.
+         draftLabel = ""
+@@ -255,7 +228,8 @@
+     @State private var editing = false
+     @State private var draftLabel = ""
+     @State private var draftText = ""
+-    @FocusState private var focus: Field?
++    @State private var focus: Field?
++    @State private var focusGroup = UUID()
+
+     private enum Field { case label, text }
+
+@@ -270,7 +244,7 @@
              if !editing {
                  Image(systemName: justCopied ? "checkmark" : item.symbol)
                  .font(.system(size: 10, weight: .medium))
@@ -626,7 +1549,7 @@
                      .frame(width: 14)
              }
              // The name stays legible while the value is covered: the row has to
-@@ -283,38 +264,22 @@
+@@ -283,38 +257,24 @@
                  // edited and a row being created are the same act, and looking
                  // alike is the whole of saying so. Bare fields inside the row
                  // read as text that had lost its alignment.
@@ -658,16 +1581,18 @@
 -                    .focused($focus, equals: .text)
 -                    .onSubmit { commit() }
 +                SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focus == .label,
-+                             onFocus: { focus = .label }, submit: commit)
-+                .frame(width: 92, height: 28)
-+                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
-+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .label ? 0.35 : 0.1), lineWidth: 1))
++                             onFocus: { focus = .label }, submit: commit, cancel: cancel,
++                             focusGroup: focusGroup, onBlur: commit)
++                .frame(width: 92, height: PocketMetrics.controlHeight)
++                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
++                .overlay(RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius).stroke(Theme.ink.opacity(focus == .label ? 0.35 : 0.1), lineWidth: 1))
 +
 +                SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focus == .text,
-+                             onFocus: { focus = .text }, submit: commit)
++                             onFocus: { focus = .text }, submit: commit, cancel: cancel,
++                             focusGroup: focusGroup, onBlur: commit)
 +                .frame(height: PocketMetrics.controlHeight)
-+                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
-+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
++                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
++                .overlay(RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
 
                  Button { commit() } label: {
                      Image(systemName: "checkmark")
@@ -677,7 +1602,7 @@
                  }
                  .buttonStyle(.plain)
                  .disabled(draftText.isEmpty)
-@@ -329,14 +294,14 @@
+@@ -329,20 +289,19 @@
                  if !item.label.isEmpty {
                      Text(item.label)
                          .font(.system(size: 11, weight: .medium))
@@ -694,18 +1619,117 @@
                      seed: UInt64(bitPattern: Int64(item.id.hashValue))
                  )
              }
-@@ -379,7 +344,7 @@
+             Spacer(minLength: 6)
+-            // Only under the pointer: a row of crosses would compete with the
+-            // snippets themselves for a glance.
++            // Cyclop's compact trailing actions reveal under the pointer.
+             if hovering, !editing {
+                 if privacy.covers(.snippets) {
+                     RevealEye(hidden: hidden) { privacy.toggle("snippet.\(item.id)") }
+@@ -358,7 +317,7 @@
+                         .foregroundStyle(index == 0 ? Theme.tertiary : Theme.secondary)
+                 }
+                 .buttonStyle(.plain)
+-                .disabled(index == 0)
++                .disabled(index == 0).accessibilityLabel("Move snippet up")
+
+                 Button { move(to: index + 1) } label: {
+                     Image(systemName: "chevron.down")
+@@ -366,7 +325,7 @@
+                         .foregroundStyle(isLast ? Theme.tertiary : Theme.secondary)
+                 }
+                 .buttonStyle(.plain)
+-                .disabled(isLast)
++                .disabled(isLast).accessibilityLabel("Move snippet down")
+
+                 Button { remove() } label: {
+                     Image(systemName: "xmark")
+@@ -376,43 +335,36 @@
+                 .buttonStyle(.plain)
+                 .pointerStyle(.default)
+                 .help(localized("Delete"))
++                .accessibilityLabel("Delete snippet")
              }
          }
          .padding(.horizontal, editing ? 6 : 9)
 -        .frame(height: editing ? 28 : 26)
-+        .frame(height: editing ? 44 : 32)
++        .frame(height: editing ? PocketMetrics.controlHeight + 8 : 26)
          .background(
              RoundedRectangle(cornerRadius: 7, style: .continuous)
                  .fill(editing || hovering ? Theme.surfaceHover : Theme.surface)
+         )
+         .contentShape(Rectangle())
+         .onHover { hovering = $0 }
+-        // Double first: SwiftUI hands a tap to the last matching gesture, and
+-        // with the single one declared first a double click would only ever
+-        // copy. The first click of a double still copies — harmless, and the
+-        // alternative is delaying every single click to see if a second lands.
+         .onTapGesture(count: 2) { beginEditing() }
+-        .onTapGesture {
+-            snippets.copy(item)
+-            // Emptying the search lets go of the panel: nothing is being typed
+-            // any more, so nothing needs to hold it open.
+-            snippets.query = ""
+-            flash($justCopied)
+-        }
++        .onTapGesture { if !editing { copy() } }
+         .animation(Theme.contentAnimation, value: hovering)
+         .animation(Theme.contentAnimation, value: justCopied)
+         .animation(Theme.contentAnimation, value: editing)
+         .onExitCommand { cancel() }
+-        // Losing the focus saves: clicking away from a row one has just edited
+-        // is not a way of throwing the edit out — Esc is.
+-        .onChange(of: focus) { _, now in
+-            if editing, now == nil { commit() }
+-        }
+         // The panel folds by itself when the pointer leaves, and the row goes
+         // with it. Whatever was typed by then has to survive that.
+         .onDisappear { if editing { commit() } }
+     }
+
++    private func copy() {
++        snippets.copy(item)
++        snippets.query = ""
++        flash($justCopied)
++    }
++
+     private func beginEditing() {
++        guard !editing else { return }
+         draftLabel = item.label
+         draftText = item.text
+         editing = true
+@@ -435,8 +387,8 @@
+
+     private func commit() {
+         guard editing else { return }
++        guard snippets.update(item, label: draftLabel, text: draftText) else { return }
+         editing = false
+         focus = nil
+-        snippets.update(item, label: draftLabel, text: draftText)
+     }
+ }
 --- upstream/UI/NotesPane.swift
 +++ socius/UI/NotesPane.swift
-@@ -53,7 +53,7 @@
+@@ -20,9 +20,15 @@
+     }
+
+     var body: some View {
+-        HStack(spacing: 10) {
+-            list
+-            editor
++        VStack(alignment: .leading, spacing: 8) {
++            if let error = notes.loadError ?? notes.writeError {
++                Text(error).font(.system(size: 11)).foregroundStyle(Theme.secondary)
++                Button("Show notes file", action: notes.reveal).buttonStyle(.plain)
++            }
++            HStack(spacing: 10) {
++                list
++                editor
++            }.disabled(notes.loadError != nil)
+         }
+         .padding(.top, 2)
+         // Arriving means arriving to type. With nothing to select, an empty
+@@ -53,7 +59,7 @@
                  Button { privacy.reveal("note.\(id)") } label: {
                      Image(systemName: "eye")
                          .font(.system(size: 13, weight: .medium))
@@ -714,7 +1738,7 @@
                          .frame(width: 30, height: 30)
                          .background(Circle().fill(Color.black.opacity(0.65)))
                  }
-@@ -146,53 +146,11 @@
+@@ -146,53 +152,11 @@
      }
 
      private var editor: some View {
@@ -772,7 +1796,7 @@
 
              if currentText.isEmpty {
                  Text("Jot something down…")
-@@ -216,9 +174,13 @@
+@@ -216,9 +180,13 @@
          // Above the curtain on purpose: a covered note still copies, the same
          // way a covered row in the other tabs does. Using what is hidden must
          // not require showing it first.
@@ -788,7 +1812,7 @@
              }
          }
          .padding(10)
-@@ -273,7 +235,7 @@
+@@ -273,7 +241,7 @@
              } else {
                  Text(preview)
                      .font(.system(size: 11, weight: isSelected ? .medium : .regular))
@@ -797,7 +1821,7 @@
                      .lineLimit(1)
                      .truncationMode(.tail)
              }
-@@ -316,12 +278,18 @@
+@@ -316,12 +284,18 @@
 
  private struct CopyNoteButton: View {
      let text: String
@@ -954,19 +1978,21 @@
      }
 
      private var emptyState: some View {
-@@ -192,10 +216,59 @@
+@@ -192,10 +216,61 @@
                  .foregroundStyle(Theme.tertiary)
              // Status, not instruction: an empty pane on its own would not say
              // whether nothing is playing or nothing could be read.
 -            Text("Nothing is playing")
-+            Text(media.spotifyInstalled ? "Play something in Spotify" : "Spotify Desktop required")
++            Text(media.readError != nil ? "Spotify access unavailable" : media.spotifyInstalled ? "Play something in Spotify" : "Spotify Desktop required")
                  .font(.system(size: 12, weight: .medium))
                  .foregroundStyle(Theme.secondary)
-+            Text(media.spotifyInstalled ? "Open the desktop app to start listening." : "Install the Spotify desktop app to use Music.")
++            Text(media.readError ?? (media.spotifyInstalled ? "Open the desktop app to start listening." : "Install the Spotify desktop app to use Music."))
 +                .font(.system(size: 11)).foregroundStyle(Theme.secondary)
++                .multilineTextAlignment(.center)
 +            Text("Browser player integration is coming later.")
 +                .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
 +            if media.spotifyInstalled {
++                if media.readError != nil { Button("Retry", action: media.retrySpotify).buttonStyle(.bordered) }
 +                Button("Open Spotify") { media.openSpotify() }.buttonStyle(.bordered)
 +            } else {
 +                Link("Get Spotify", destination: URL(string: "https://www.spotify.com/download/mac/")!)

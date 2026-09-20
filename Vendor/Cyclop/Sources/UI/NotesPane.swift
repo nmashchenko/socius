@@ -20,9 +20,15 @@ struct NotesPane: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            list
-            editor
+        VStack(alignment: .leading, spacing: 8) {
+            if let error = notes.loadError ?? notes.writeError {
+                Text(error).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                Button("Show notes file", action: notes.reveal).buttonStyle(.plain)
+            }
+            HStack(spacing: 10) {
+                list
+                editor
+            }.disabled(notes.loadError != nil)
         }
         .padding(.top, 2)
         // Arriving means arriving to type. With nothing to select, an empty

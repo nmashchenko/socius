@@ -47,9 +47,12 @@ final class NowPlayingFeed {
 
     private var process: Process?
     private var input: FileHandle?
+    private var output: FileHandle?
+    private var restart: Task<Void, Never>?
+    private var generation = 0
     private var buffer = Data()
     private var failures = 0
-    private var stopped = false
+    private var stopped = true
 
     private var helperPath: String? {
         Bundle.main.path(forResource: "libcyclopmedia", ofType: "dylib")
@@ -58,15 +61,31 @@ final class NowPlayingFeed {
     // MARK: - Lifecycle
 
     func start() {
+        guard stopped else { return }
         stopped = false
+        failures = 0
+        buffer.removeAll()
+        generation &+= 1
         launch()
     }
 
     func stop() {
         stopped = true
+        generation &+= 1
+        restart?.cancel()
+        restart = nil
+        process?.terminationHandler = nil
+        if process?.isRunning == true { process?.terminate() }
+        cleanUp()
+    }
+
+    private func cleanUp() {
+        output?.readabilityHandler = nil
+        try? input?.close()
+        output = nil
         input = nil
-        process?.terminate()
         process = nil
+        buffer.removeAll()
     }
 
     private func launch() {
@@ -89,6 +108,7 @@ final class NowPlayingFeed {
         task.standardOutput = output
         task.standardInput = commands
         task.standardError = FileHandle.nullDevice
+        let currentGeneration = generation
 
         // `@Sendable` здесь написан, а не выведен, и это не украшение.
         //
@@ -107,30 +127,39 @@ final class NowPlayingFeed {
         // там же, где был, — внутри `Task`.
         output.fileHandleForReading.readabilityHandler = { @Sendable [weak self] handle in
             let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            Task { @MainActor in self?.consume(chunk) }
+            guard !chunk.isEmpty else { handle.readabilityHandler = nil; return }
+            Task { @MainActor in
+                guard let self, !self.stopped, self.generation == currentGeneration else { return }
+                self.consume(chunk)
+            }
         }
 
-        task.terminationHandler = { @Sendable [weak self] _ in
-            Task { @MainActor in self?.handleTermination() }
+        task.terminationHandler = { @Sendable [weak self] task in
+            Task { @MainActor in
+                guard let self, self.generation == currentGeneration, self.process === task else { return }
+                self.handleTermination()
+            }
         }
 
         do {
             try task.run()
         } catch {
-            NSLog("Cyclop: helper failed to launch: \(error.localizedDescription)")
+            output.fileHandleForReading.readabilityHandler = nil
+            task.terminationHandler = nil
+            try? commands.fileHandleForWriting.close()
+            NSLog("Socius: helper failed to launch: \(error.localizedDescription)")
             onUnavailable?()
             return
         }
 
         process = task
+        self.output = output.fileHandleForReading
         input = commands.fileHandleForWriting
     }
 
     private func handleTermination() {
         guard !stopped else { return }
-        process = nil
-        input = nil
+        cleanUp()
         failures += 1
         // Three straight crashes means the route is gone — perl removed, or the
         // daemon closed to platform binaries too. Let the caller fall back.
@@ -138,7 +167,12 @@ final class NowPlayingFeed {
             onUnavailable?()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.launch() }
+        let currentGeneration = generation
+        restart = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self, self.generation == currentGeneration else { return }
+            self.launch()
+        }
     }
 
     // MARK: - Commands
@@ -154,7 +188,7 @@ final class NowPlayingFeed {
         do {
             try input.write(contentsOf: data)
         } catch {
-            NSLog("Cyclop: helper write failed: \(error.localizedDescription)")
+            NSLog("Socius: helper write failed: \(error.localizedDescription)")
         }
     }
 

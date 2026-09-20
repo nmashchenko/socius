@@ -5,7 +5,7 @@ Release metadata lives in `Scripts/release-version`. Public builds target Apple 
 Run tests first:
 
 ```sh
-swift test --disable-sandbox
+swift test --disable-sandbox --no-parallel
 ```
 
 Prepare an Apple Developer ID Application certificate in your login Keychain and save notarization credentials with `xcrun notarytool store-credentials`. Never commit signing keys or passwords.

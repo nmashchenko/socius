@@ -8,6 +8,8 @@ import Observation
     var mood: Mood = .content
     var speech = "Hi, I’m Mochi. A little company for your desktop."
     var panelOpen = false
+    var onboardingActive = false
+    var desktopSuppressed = false
     var selectedTool = "Shelf"
     var reaction = 0
     enum Offering: String { case snack, shell, rest }
@@ -54,17 +56,37 @@ import Observation
     var displayName: String { name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Mochi" : name.trimmingCharacters(in: .whitespacesAndNewlines) }
     @ObservationIgnored var shortcutChanged: (() -> Void)?
     var shortcutError: String?
+    var recordingShortcut = false
     var shortcut = PetShortcut() { didSet {
-        if let data = try? JSONEncoder().encode(shortcut) { preferences?.set(data, forKey: "petShortcut") }
         shortcutChanged?()
+        guard shortcutError == nil else { return }
+        if let data = try? JSONEncoder().encode(shortcut) { preferences?.set(data, forKey: "petShortcut") }
     } }
+    func setShortcut(_ proposed: PetShortcut) {
+        let previous = shortcut
+        shortcut = proposed
+        if let error = shortcutError {
+            shortcut = previous
+            shortcutError = error
+        }
+    }
     var hiddenTools: Set<String> = [] { didSet { preferences?.set(Array(hiddenTools).sorted(), forKey: "hiddenTools") } }
     func showsTool(_ tool: String) -> Bool { tool == "Settings" || !hiddenTools.contains(tool) }
-    var quiet = false { didSet { preferences?.set(quiet, forKey: "quietMode") } }
+    var colorway: PetColorway = .coral { didSet { preferences?.set(colorway.rawValue, forKey: "petColorway") } }
+    var sizeAdjustment = 1.0 { didSet {
+        preferences?.set(sizeAdjustment, forKey: "petSizeAdjustment")
+        appearanceChanged?()
+    } }
+    @ObservationIgnored var appearanceChanged: (() -> Void)?
+    var desktopScale: CGFloat = 1
+    var metrics: PetMetrics { PetMetrics(scale: desktopScale) }
     init(preferences: UserDefaults? = nil) {
         self.preferences = preferences
         name = preferences?.string(forKey: "petName") ?? "Mochi"
-        quiet = preferences?.bool(forKey: "quietMode") ?? false
+        colorway = preferences?.string(forKey: "petColorway").flatMap(PetColorway.init(rawValue:)) ?? .coral
+        let savedSize = preferences?.object(forKey: "petSizeAdjustment") as? Double ?? 1
+        sizeAdjustment = savedSize.isFinite ? min(1.4, max(0.75, savedSize)) : 1
+        preferences?.removeObject(forKey: "quietMode")
         hiddenTools = Set(preferences?.stringArray(forKey: "hiddenTools") ?? [])
         if let data = preferences?.data(forKey: "petShortcut"), let saved = try? JSONDecoder().decode(PetShortcut.self, from: data) { shortcut = saved }
         speech = "Hi, I’m \(displayName). A little company for your desktop."
@@ -124,7 +146,7 @@ import Observation
             }
         }
     }
-    func pet() { happiness = min(100, happiness + 8); react(.happy, ["Oh! That’s the spot.", "You’re my favorite coworker.", "A tiny high five for you."][reaction % 3]) }
+    func pet() { happiness = min(100, happiness + 2); react(.happy, ["Oh! That’s the spot.", "You’re my favorite coworker.", "A tiny high five for you."][reaction % 3]) }
     func feed() { fullness = min(100, fullness + 45); react(.eating, "My favorite. Little shrimp, big happiness.") }
     func play() { happiness = min(100, happiness + 45); react(.playing, "You found my pearl! Again sometime?") }
     func sleep() {

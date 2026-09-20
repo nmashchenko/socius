@@ -72,7 +72,7 @@ final class ConfigStore: ObservableObject {
             } catch {
                 value = File()
                 fileBroken = true
-                NSLog("Cyclop: config.json is not readable: \(error.localizedDescription)")
+                NSLog("Socius: config.json is not readable: \(error.localizedDescription)")
             }
         } else {
             // Nothing on disk yet, so nothing to protect — assembled from
@@ -182,7 +182,7 @@ final class ConfigStore: ObservableObject {
         do {
             try encoder.encode(file).write(to: Self.file, options: .atomic)
         } catch {
-            NSLog("Cyclop: cannot write config.json: \(error.localizedDescription)")
+            NSLog("Socius: cannot write config.json: \(error.localizedDescription)")
         }
     }
 

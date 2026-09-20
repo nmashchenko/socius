@@ -11,6 +11,11 @@ struct AnchoredPocket: NSViewRepresentable {
     func makeNSView(context: Context) -> PocketAnchorView { PocketAnchorView() }
     func updateNSView(_ view: PocketAnchorView, context: Context) {
         context.coordinator.dismiss = { isPresented = false }
+        if model.onboardingActive || model.desktopSuppressed {
+            view.didAttach = nil
+            context.coordinator.hide()
+            return
+        }
         if hub.store.isChoosingFiles { context.coordinator.suspend(); return }
         if isPresented {
             view.didAttach = { [weak coordinator = context.coordinator, weak view] in
@@ -28,9 +33,13 @@ struct AnchoredPocket: NSViewRepresentable {
         private var globalMonitor: Any?
         private var choosingFiles: (() -> Bool)?
         private var visibleFrame: (() -> CGRect)?
+        private var reposition: (() -> Void)?
+        private var closePresentation: (() -> Void)?
 
-        func show(from anchor: NSView, model: PetModel, hub: ToolHub) {
+        func show(from anchor: PocketAnchorView, model: PetModel, hub: ToolHub) {
+            guard !model.onboardingActive, !model.desktopSuppressed else { hide(); return }
             if let panel {
+                reposition?()
                 if !panel.isVisible { panel.ignoresMouseEvents = false; panel.makeKeyAndOrderFront(nil) }
                 return
             }
@@ -38,7 +47,7 @@ struct AnchoredPocket: NSViewRepresentable {
             let rect = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
             let screen = parent.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? rect
             let left = rect.midX > screen.midX
-            let size = CGSize(width: 460, height: 580)
+            let size = CGSize(width: 460, height: 650)
             let x = left ? rect.minX - size.width + 8 : rect.maxX - 8
             let y = min(screen.maxY - size.height, max(screen.minY, rect.midY - size.height / 2))
             let window = PetPanel(contentRect: CGRect(origin: CGPoint(x: min(screen.maxX - size.width, max(screen.minX, x)), y: y), size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -46,7 +55,7 @@ struct AnchoredPocket: NSViewRepresentable {
             window.hidesOnDeactivate = false; window.isReleasedWhenClosed = false
             window.acceptsMouseMovedEvents = true
             window.animationBehavior = .none; window.level = .floating
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenPrimary]
             window.contentView = PetHostingView(rootView:
                 PocketView(model: model, close: { [weak self] in self?.dismiss() }, nativePopover: true, hub: hub)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: left ? .trailing : .leading)
@@ -54,7 +63,19 @@ struct AnchoredPocket: NSViewRepresentable {
                     .environment(\.pocketAttachedOnRight, left)
             )
             panel = window
+            let reposition = { [weak anchor, weak window] in
+                guard let anchor, let window, let parent = anchor.window else { return }
+                let rect = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+                let screen = parent.screen?.visibleFrame ?? rect
+                let x = left ? rect.minX - size.width + 8 : rect.maxX - 8
+                let y = min(screen.maxY - size.height, max(screen.minY, rect.midY - size.height / 2))
+                let origin = CGPoint(x: min(screen.maxX - size.width, max(screen.minX, x)), y: y)
+                if window.frame.origin != origin { window.setFrameOrigin(origin) }
+            }
+            self.reposition = reposition
+            anchor.didLayout = reposition
             choosingFiles = { hub.store.isChoosingFiles }
+            closePresentation = { hub.cyclop.closePresentation() }
             visibleFrame = { [weak window] in
                 guard let window else { return .zero }
                 let width: CGFloat = hub.showingTool ? 420 : 340
@@ -68,7 +89,7 @@ struct AnchoredPocket: NSViewRepresentable {
                 let consumed = MainActor.assumeIsolated {
                     guard let self, self.choosingFiles?() != true else { return false }
                     if event.type == .mouseMoved { self.updateHitRegion(); return false }
-                    if event.type == .keyDown && event.keyCode == 53 { self.dismiss(); return true }
+                    if event.type == .keyDown && event.keyCode == 53 && !(self.panel?.firstResponder is NSTextView) { self.dismiss(); return true }
                     // The pet owns its click/drag sequence and closes this pocket when a drag starts.
                     if event.type != .keyDown && event.window !== self.panel && event.window !== parent { self.dismiss() }
                     return false
@@ -90,6 +111,8 @@ struct AnchoredPocket: NSViewRepresentable {
             panel?.ignoresMouseEvents = !(visibleFrame?().contains(NSEvent.mouseLocation) ?? false)
         }
         func hide() {
+            closePresentation?()
+            closePresentation = nil
             if let localMonitor { NSEvent.removeMonitor(localMonitor) }
             if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
             localMonitor = nil; globalMonitor = nil
@@ -97,12 +120,15 @@ struct AnchoredPocket: NSViewRepresentable {
             panel?.orderOut(nil); panel = nil
             choosingFiles = nil
             visibleFrame = nil
+            reposition = nil
         }
     }
 }
 
 final class PocketAnchorView: NSView {
     var didAttach: (() -> Void)?
+    var didLayout: (() -> Void)?
+    override func layout() { super.layout(); didLayout?() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil { didAttach?() }

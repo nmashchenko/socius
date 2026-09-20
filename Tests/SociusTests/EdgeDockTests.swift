@@ -20,30 +20,30 @@ import Testing
     @Test func inactivityResetsWhenPetIsTouched() {
         let start = Date(timeIntervalSince1970: 1000)
         var schedule = IdleSchedule(now: start)
-        #expect(!schedule.shouldHide(at: start.addingTimeInterval(29)))
-        #expect(schedule.shouldHide(at: start.addingTimeInterval(30)))
-        schedule.interact(at: start.addingTimeInterval(28))
-        #expect(!schedule.shouldHide(at: start.addingTimeInterval(32)))
-        #expect(schedule.shouldHide(at: start.addingTimeInterval(58)))
+        #expect(!schedule.shouldHide(at: start.addingTimeInterval(9)))
+        #expect(schedule.shouldHide(at: start.addingTimeInterval(10)))
+        schedule.interact(at: start.addingTimeInterval(8))
+        #expect(!schedule.shouldHide(at: start.addingTimeInterval(12)))
+        #expect(schedule.shouldHide(at: start.addingTimeInterval(18)))
     }
-    @Test func productionReminderWaitsFiveMinutes() {
+    @Test func normalReminderWaitsThirtySeconds() {
         let start = Date(timeIntervalSince1970: 1000)
         var schedule = IdleSchedule(now: start)
-        schedule.tucked(at: start.addingTimeInterval(30))
-        #expect(!schedule.shouldPeek(at: start.addingTimeInterval(329)))
-        #expect(schedule.shouldPeek(at: start.addingTimeInterval(330)))
-        let early = schedule.takeReminder(at: start.addingTimeInterval(60))
-        let first = schedule.takeReminder(at: start.addingTimeInterval(300))
-        let tooSoon = schedule.takeReminder(at: start.addingTimeInterval(450))
-        let next = schedule.takeReminder(at: start.addingTimeInterval(600))
-        #expect(!early)
-        #expect(first)
-        #expect(!tooSoon)
-        #expect(next)
-        schedule.interact(at: start.addingTimeInterval(301))
+        schedule.tucked(at: start.addingTimeInterval(10))
+        #expect(!schedule.shouldPeek(at: start.addingTimeInterval(39)))
+        #expect(schedule.shouldPeek(at: start.addingTimeInterval(40)))
+        let reminder0 = schedule.takeReminder(at: start.addingTimeInterval(29))
+        #expect(!reminder0)
+        let reminder1 = schedule.takeReminder(at: start.addingTimeInterval(30))
+        #expect(reminder1)
+        let reminder2 = schedule.takeReminder(at: start.addingTimeInterval(45))
+        #expect(!reminder2)
+        let reminder3 = schedule.takeReminder(at: start.addingTimeInterval(60))
+        #expect(reminder3)
+        schedule.interact(at: start.addingTimeInterval(61))
         #expect(schedule.nextPeek == nil)
-        let afterInteraction = schedule.takeReminder(at: start.addingTimeInterval(310))
-        #expect(!afterInteraction)
+        let reminder4 = schedule.takeReminder(at: start.addingTimeInterval(70))
+        #expect(!reminder4)
     }
     @Test(arguments: [CGRect(x: 0, y: 25, width: 1440, height: 875), CGRect(x: -1920, y: -200, width: 1920, height: 1080)])
     func retreatKeepsHeightOnEitherSideAndNegativeOriginDisplays(_ screen: CGRect) {
@@ -82,8 +82,8 @@ import Testing
         guard let screen = NSScreen.main else { return }
         let home = CGRect(x: screen.visibleFrame.maxX - 300, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        let pet = PetModel(); pet.quiet = true
-        let dock = EdgeDockController(model: pet)
+        let pet = PetModel()
+        let dock = EdgeDockController(model: pet, reduceMotion: { true })
         dock.start(window: panel)
         defer { dock.stop() }
         let now = Date()
@@ -96,10 +96,11 @@ import Testing
         #expect(panel.frame.minY == home.minY)
         #expect(panel.frame.maxX == screen.visibleFrame.maxX)
         #expect(abs(dock.offset) == 95)
-        dock.update(at: now.addingTimeInterval(363))
+        dock.update(at: now.addingTimeInterval(90))
+        dock.update(at: now.addingTimeInterval(93))
         #expect(dock.phase == .peeking)
         #expect(abs(dock.offset) == 95)
-        #expect(dock.reminder == nil)
+        #expect(dock.reminder != nil)
         dock.hover(true)
         #expect(dock.phase == .peeking)
         dock.interact()
@@ -121,7 +122,7 @@ import Testing
         let home = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let pet = PetModel()
-        let dock = EdgeDockController(model: pet)
+        let dock = EdgeDockController(model: pet, reduceMotion: { true })
         dock.start(window: panel)
         defer { dock.stop() }
         switch activity {
@@ -137,7 +138,6 @@ import Testing
         pet.offering = nil
         pet.shellGameActive = false
         pet.mood = .content
-        pet.quiet = true
         dock.update(at: Date())
         #expect(dock.phase == .tucked)
     }
@@ -147,8 +147,8 @@ import Testing
         guard let screen = NSScreen.main else { return }
         let home = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY + 80, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        let pet = PetModel(); pet.quiet = true
-        let dock = EdgeDockController(model: pet)
+        let pet = PetModel()
+        let dock = EdgeDockController(model: pet, reduceMotion: { true })
         dock.start(window: panel)
         defer { dock.stop() }
         dock.beginIdle()
@@ -208,7 +208,7 @@ import Testing
         let home = CGRect(x: screen.visibleFrame.maxX - 330, y: screen.visibleFrame.minY + 100, width: 240, height: 270)
         let panel = PetPanel(contentRect: home, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let pet = PetModel()
-        let dock = EdgeDockController(model: pet)
+        let dock = EdgeDockController(model: pet, reduceMotion: { true })
         dock.start(window: panel)
         defer { dock.stop() }
         dock.simulateIdle()

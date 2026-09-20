@@ -37,16 +37,27 @@ import AppKit
             guard let url = ScreenshotVault.save(png) else { return }
             self?.shelf.add([url])
         }
+        screenshots.onStateChanged = { [weak self] in self?.refreshScreenshotStatus() }
         screenshots.onImage = { [weak self] url in self?.shelf.add([url]) }
         screenshots.onAccessError = { [weak self] in
             self?.screenshotNotice = "Folder access is unavailable. Choose Watch screenshots to grant access again."
         }
         if rememberCopies { clipboard.start() }
         screenshots.resumeIfEnabled()
-        media.start()
+        refreshScreenshotStatus()
     }
 
     @Published var screenshotNotice: String?
+    @Published private(set) var watchedFolder: String?
+
+    private func refreshScreenshotStatus() {
+        watchedFolder = screenshots.activeFolder?.path
+    }
+    func stopWatchingScreenshots() {
+        screenshots.disable()
+        refreshScreenshotStatus()
+        screenshotNotice = "Screenshot watching stopped. Files already on your shelf stay here."
+    }
 
     public func stop() {
         started = false
@@ -54,6 +65,13 @@ import AppKit
         screenshots.stop()
         media.stop()
         notes.flush()
+        privacy.coverEverything()
+    }
+
+    public func closePresentation() {
+        privacy.coverEverything()
+        notes.flush()
+        media.setActive(false)
     }
 
     func addFiles() {
@@ -85,7 +103,8 @@ import AppKit
         NSApp.activate(ignoringOtherApps: true)
         screenshots.requestAccess { [weak self] granted in
             self?.choosingFiles = false
-            if granted { self?.screenshotNotice = "Watching the selected folder for new screenshots." }
+            self?.refreshScreenshotStatus()
+            if granted { self?.screenshotNotice = nil }
         }
     }
 
@@ -147,6 +166,7 @@ public struct CyclopPocketPane: View {
                 if tool == "Music" { pocket.media.setActive(true) }
             }
             .onDisappear {
+                pocket.privacy.coverEverything()
                 if tool == "Notes" { pocket.notes.leave(); pocket.notes.flush() }
                 if tool == "Music" { pocket.media.setActive(false) }
             }
@@ -158,8 +178,19 @@ public struct CyclopPocketPane: View {
             VStack(alignment: .leading, spacing: PocketMetrics.sectionGap) {
                 HStack {
                     Button("Add files…", action: pocket.addFiles)
-                    Button("Watch screenshots…", action: pocket.watchScreenshots)
+                    Button(pocket.watchedFolder == nil ? "Watch screenshots…" : "Change folder…", action: pocket.watchScreenshots)
                 }.buttonStyle(PocketToolbarButton())
+                if let folder = pocket.watchedFolder {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(red: 0.37, green: 0.47, blue: 0.31))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Watching \(URL(fileURLWithPath: folder).lastPathComponent)").font(.system(size: 11, weight: .medium))
+                            Text("New screenshots appear here automatically.").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Button("Stop", action: pocket.stopWatchingScreenshots).buttonStyle(PocketToolbarButton())
+                    }.help(folder)
+                }
                 if let notice = pocket.screenshotNotice {
                     Text(notice).font(.system(size: 11)).foregroundStyle(Theme.secondary)
                 }

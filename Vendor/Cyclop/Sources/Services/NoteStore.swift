@@ -24,12 +24,15 @@ final class NoteStore: ObservableObject {
     /// Which note the editor shows. Lives here rather than in the pane so the
     /// choice survives the pane being unmounted with the panel.
     @Published var selected: Note.ID?
-
-    private static let file = Support.file("notes.json")
+    @Published private(set) var loadError: String?
+    @Published private(set) var writeError: String?
+    let file: URL
+    private var loadedData: Data?
 
     private let saves = DebouncedWrite()
 
-    init() {
+    init(file: URL = Support.file("notes.json")) {
+        self.file = file
         load()
     }
 
@@ -39,6 +42,7 @@ final class NoteStore: ObservableObject {
     /// the order never changes afterwards: a list that reshuffles itself on
     /// every edit loses the reader's place for tidiness nobody asked for.
     func add() {
+        guard loadError == nil else { return }
         let note = Note(id: UUID(), text: "", edited: Date())
         notes.insert(note, at: 0)
         selected = note.id
@@ -46,6 +50,7 @@ final class NoteStore: ObservableObject {
     }
 
     func update(_ id: Note.ID, text: String) {
+        guard loadError == nil else { return }
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].text = text
         notes[index].edited = Date()
@@ -53,6 +58,7 @@ final class NoteStore: ObservableObject {
     }
 
     func remove(_ id: Note.ID) {
+        guard loadError == nil else { return }
         notes.removeAll { $0.id == id }
         if selected == id { selected = notes.first?.id }
         scheduleSave()
@@ -62,20 +68,29 @@ final class NoteStore: ObservableObject {
     /// sweep themselves out. They cost one hover to recreate, and a trail of
     /// blank cards is exactly the clutter a scratchpad exists to avoid.
     func leave() {
+        guard loadError == nil else { return }
+        let previous = notes
         notes.removeAll { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         if let selected, !notes.contains(where: { $0.id == selected }) {
             self.selected = notes.first?.id
         }
+        if notes != previous { scheduleSave() }
         flush()
     }
 
     // MARK: - Persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: Self.file),
-              let stored = try? JSONDecoder().decode([Note].self, from: data) else { return }
-        notes = stored
-        selected = notes.first?.id
+        do {
+            let data = try Data(contentsOf: file)
+            notes = try JSONDecoder().decode([Note].self, from: data)
+            loadedData = data
+            selected = notes.first?.id
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            // Only an absent file is a safe empty store.
+        } catch {
+            loadError = "Couldn’t read notes.json. Your saved file is unchanged. Open it to check its contents and access, then reopen Socius."
+        }
     }
 
     /// A moment after the typing pauses, not on every keystroke: the text
@@ -87,11 +102,25 @@ final class NoteStore: ObservableObject {
 
     func flush() { saves.flush() }
 
+    func reveal() { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+
     private func persist() {
+        guard loadError == nil else { return }
         do {
-            try JSONEncoder().encode(notes).write(to: Self.file, options: .atomic)
+            let current: Data?
+            do { current = try Data(contentsOf: file) }
+            catch let error as CocoaError where error.code == .fileReadNoSuchFile { current = nil }
+            guard current == loadedData else {
+                writeError = "notes.json changed outside Socius. Copy your unsaved text before reopening the app; the saved file has not been overwritten."
+                return
+            }
+            let data = try JSONEncoder().encode(notes)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+            loadedData = data
+            writeError = nil
         } catch {
-            NSLog("Cyclop: cannot write notes.json: \(error.localizedDescription)")
+            writeError = "Couldn’t save notes. Your edits remain in this session. Check file access and keep a copy before quitting."
         }
     }
 }

@@ -16,7 +16,11 @@ public enum SociusStorage {
             .appendingPathComponent(isDevelopment ? "Socius/Development" : "Socius", isDirectory: true)
     }
     public static var preferences: UserDefaults {
-        isDevelopment ? UserDefaults(suiteName: "app.socius.desktop.development")! : .standard
+        let developmentID = "app.socius.desktop.development"
+        // Bundled development apps already use this domain as their standard
+        // defaults. macOS rejects creating a suite with the app's own identifier.
+        guard isDevelopment, Bundle.main.bundleIdentifier != developmentID else { return .standard }
+        return UserDefaults(suiteName: developmentID) ?? .standard
     }
 }
 

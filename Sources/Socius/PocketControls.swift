@@ -8,7 +8,7 @@ struct PocketInputStyle: ViewModifier {
         content.textFieldStyle(.plain).font(.system(size: 12))
             .padding(.horizontal, PocketMetrics.controlInset)
             .frame(height: PocketMetrics.controlHeight)
-            .background(Palette.green.opacity(0.08), in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
+            .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
     }
 }
 

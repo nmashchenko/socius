@@ -1,10 +1,10 @@
 import AppKit
 
-/// Now Playing for whatever the system is playing — browser tabs included.
+/// Spotify playback, using the system feed when Spotify owns Now Playing.
 ///
 /// Primary source is `NowPlayingFeed`, which reaches MediaRemote through a
 /// helper hosted by `/usr/bin/perl`. If that route ever closes, the controller
-/// falls back to scripting Apple Music and Spotify directly.
+/// reads Spotify directly if another app owns the session or the helper fails.
 @MainActor
 final class MediaController: ObservableObject {
     struct Track: Equatable {
@@ -26,10 +26,14 @@ final class MediaController: ObservableObject {
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var position: TimeInterval = 0
     @Published private(set) var sourceName: String?
+    @Published private(set) var readError: String?
     @Published var volume: Double = 0.5
     @Published private(set) var volumeAvailable = false
     var volumeLabel: String { "System volume" }
-    init() {
+    init(readSpotify: @escaping (@escaping (Result<PlayerState?, PlayerBridge.ReadError>) -> Void) -> Void = {
+        PlayerBridge.stateResult(of: .spotify, completion: $0)
+    }) {
+        self.readSpotify = readSpotify
         if ProcessInfo.processInfo.arguments.contains("--render-preview") {
             track = Track(title: "Midnight City", artist: "M83", album: "", key: "preview")
             isPlaying = true; duration = 244; position = 87; volumeAvailable = true
@@ -59,18 +63,15 @@ final class MediaController: ObservableObject {
             if value == nil { self?.refreshVolume() }
         }
     }
-    /// Whether the player accepts skipping at all. A browser tab playing one
-    /// video registers no handler for it — the command leaves and nothing
-    /// happens — so the buttons go dim rather than dead, the way the system's
-    /// own Now Playing widget dims them for the same session. True until told
-    /// otherwise: the scripted fallback below drives Music and Spotify, and
-    /// both skip fine.
+    /// Use Spotify's reported capabilities when available.
     @Published private(set) var canSkip = true
 
     private let feed = NowPlayingFeed()
     private var feedAvailable = true
+    private var usingSpotifyScript = false
+    private let readSpotify: (@escaping (Result<PlayerState?, PlayerBridge.ReadError>) -> Void) -> Void
+    private var stateRequest: UUID?
 
-    private var activeApp: PlayerApp?
     private var artworkKey: String?
     private var anchor: (position: TimeInterval, at: Date)?
     /// Where we asked the player to jump, and when — see `apply`.
@@ -79,17 +80,30 @@ final class MediaController: ObservableObject {
     private var observers: [Any] = []
     /// Whether the panel is open — the ticker below runs only then.
     private var isActive = false
+    private var started = false
 
     // MARK: - Lifecycle
 
     func start() {
-        guard spotifyInstalled else { return }
+        guard spotifyInstalled, !started else { return }
+        started = true
+        feedAvailable = true
         feed.onUpdate = { [weak self] snapshot in self?.apply(snapshot) }
         feed.onUnavailable = { [weak self] in self?.switchToScriptingFallback() }
         feed.start()
+        let center = DistributedNotificationCenter.default()
+        observers.append(center.addObserver(forName: PlayerApp.spotify.changeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isActive else { return }
+                self.refreshFromPlayers()
+            }
+        })
     }
 
     func stop() {
+        started = false
+        isActive = false
+        stateRequest = nil
         feed.stop()
         observers.forEach { DistributedNotificationCenter.default().removeObserver($0) }
         observers.removeAll()
@@ -105,19 +119,27 @@ final class MediaController: ObservableObject {
     /// whatever drifted a beat later.
     func setActive(_ active: Bool) {
         isActive = active
+        if !active { stateRequest = nil }
         updateTicker()
         guard active else { return }
         let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") != nil
-        if installed && !spotifyInstalled { spotifyInstalled = true; start() }
         spotifyInstalled = installed
         guard installed else { clear(); return }
+        start()
         refreshVolume()
         tick()
         if feedAvailable {
             feed.refresh()
-        } else {
+        }
+        if !feedAvailable || usingSpotifyScript {
             refreshFromPlayers()
         }
+    }
+
+    func retrySpotify() {
+        guard isActive else { return }
+        readError = nil
+        refreshFromPlayers()
     }
 
     // MARK: - Transport
@@ -126,17 +148,16 @@ final class MediaController: ObservableObject {
         // Optimistic flip so the button feels instant; the feed corrects it.
         isPlaying.toggle()
         setAnchor(position)
-        // The per-client command set has no toggle of its own (#23) — Play
-        // and Pause are sent explicitly, by the state just flipped to above.
-        dispatch(feed: isPlaying ? .play : .pause, script: { PlayerBridge.playPause($0) }, key: .playPause)
+        // Explicitly target Spotify even if another app now owns Now Playing.
+        PlayerBridge.playPause(.spotify)
     }
 
     func next() {
-        dispatch(feed: .next, script: { PlayerBridge.next($0) }, key: .next)
+        PlayerBridge.next(.spotify)
     }
 
     func previous() {
-        dispatch(feed: .previous, script: { PlayerBridge.previous($0) }, key: .previous)
+        PlayerBridge.previous(.spotify)
     }
 
     func seek(to seconds: TimeInterval) {
@@ -144,31 +165,24 @@ final class MediaController: ObservableObject {
         let clamped = min(max(0, seconds), duration)
         setAnchor(clamped)
         pendingSeek = (clamped, Date())
-        if feedAvailable {
-            feed.seek(to: clamped)
-        } else if let activeApp {
-            PlayerBridge.seek(activeApp, to: clamped)
-        }
-    }
-
-    private func dispatch(
-        feed command: NowPlayingFeed.Command,
-        script: (PlayerApp) -> Void,
-        key: PlayerBridge.MediaKey
-    ) {
-        if feedAvailable {
-            feed.send(command)
-        } else if let activeApp {
-            script(activeApp)
-        } else {
-            return // Never send a global media key to an unrelated player.
-        }
+        // Always address Spotify explicitly. The system player can change
+        // between a snapshot and a button press (for example, to an Arc tab).
+        PlayerBridge.seek(.spotify, to: clamped)
     }
 
     // MARK: - Feed
 
-    private func apply(_ snapshot: NowPlayingFeed.Snapshot) {
-        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else { return clear() }
+    func apply(_ snapshot: NowPlayingFeed.Snapshot) {
+        guard !snapshot.isEmpty, snapshot.source?.lowercased() == "spotify" else {
+            usingSpotifyScript = true
+            InteractionTrace.record("media system source=otherOrEmpty; query Spotify directly=\(isActive)")
+            if isActive { refreshFromPlayers() }
+            return
+        }
+        usingSpotifyScript = false
+        stateRequest = nil
+        readError = nil
+        InteractionTrace.record("media Spotify system snapshot playing=\(snapshot.isPlaying) track=true")
 
         let key = "\(snapshot.title)|\(snapshot.artist)|\(snapshot.album)"
         track = Track(title: snapshot.title, artist: snapshot.artist, album: snapshot.album, key: key)
@@ -226,7 +240,6 @@ final class MediaController: ObservableObject {
     }
 
     private func clear() {
-        activeApp = nil
         track = nil
         artwork = nil
         artworkKey = nil
@@ -238,37 +251,40 @@ final class MediaController: ObservableObject {
         updateTicker()
     }
 
-    // MARK: - Fallback: scriptable players only
+    // MARK: - Direct Spotify reads
 
     private func switchToScriptingFallback() {
         guard feedAvailable else { return }
         feedAvailable = false
-        // Nothing reports supported commands on this route, and the two apps it
-        // drives both skip — so the arrows come back rather than staying dim
-        // on a state no longer being refreshed.
+        usingSpotifyScript = true
         canSkip = true
-        NSLog("Cyclop: Now Playing helper unavailable, falling back to Music/Spotify scripting")
+        NSLog("Socius: Now Playing helper unavailable, falling back to Spotify scripting")
 
-        let center = DistributedNotificationCenter.default()
-        for app in [PlayerApp.spotify] {
-            observers.append(center.addObserver(
-                forName: app.changeNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.activeApp = app
-                    self?.refreshFromPlayers()
-                }
-            })
-        }
         refreshFromPlayers()
     }
 
     private func refreshFromPlayers() {
-        PlayerBridge.state(of: .spotify) { [weak self] state in
-            guard let self else { return }
+        guard isActive, stateRequest == nil else { return }
+        let request = UUID()
+        stateRequest = request
+        readSpotify { [weak self] result in
+            guard let self, self.isActive, self.stateRequest == request else { return }
+            self.stateRequest = nil
+            let state: PlayerState?
+            switch result {
+            case .success(let value):
+                state = value
+                self.readError = nil
+                InteractionTrace.record("media direct Spotify track=\(value != nil) playing=\(value?.isPlaying == true)")
+            case .failure(let error):
+                self.clear()
+                self.readError = error.message
+                InteractionTrace.record("media direct Spotify failed: \(error)")
+                return
+            }
             guard let state else { return self.clear() }
 
-            self.activeApp = state.app
+            self.canSkip = true
             self.sourceName = state.app.displayName
             self.track = Track(title: state.title, artist: state.artist, album: state.album, key: state.key)
             self.isPlaying = state.isPlaying

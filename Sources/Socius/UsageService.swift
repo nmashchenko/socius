@@ -53,54 +53,83 @@ enum CodexUsageClient {
         return paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }).map { URL(fileURLWithPath: $0) }
     }
     static func read(executable: URL, timeoutSeconds: Double = 20) async throws -> Data {
+        try Task.checkCancellation()
         let process = Process()
         process.executableURL = executable
         process.arguments = ["app-server", "--listen", "stdio://"]
         var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        environment["PATH"] = CLIExecutableLocator.runtimePath(for: executable)
         process.environment = environment
         let input = Pipe(); let output = Pipe()
         process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        let (chunks, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        output.fileHandleForReading.readabilityHandler = { @Sendable handle in
+            // Read only the available bytes: a fixed-size read can wait for the
+            // next RPC response while the child is waiting for our request.
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                continuation.finish()
+                return
+            }
+            continuation.yield(data)
+        }
+        defer {
+            output.fileHandleForReading.readabilityHandler = nil
+            continuation.finish()
+            try? input.fileHandleForWriting.close()
+            // ARC closes the read end after any in-flight handler releases it.
+            if process.isRunning { process.terminate() }
+        }
         try process.run()
         let timeout = Task {
             do { try await Task.sleep(for: .seconds(timeoutSeconds)) } catch { return }
+            continuation.finish(throwing: ToolError.message("Codex timed out while reading limits. Check your CLI sign-in and try again."))
             if process.isRunning { process.terminate() }
         }
-        defer {
-            timeout.cancel()
-            try? input.fileHandleForWriting.close()
-            if process.isRunning { process.terminate() }
-        }
+        defer { timeout.cancel() }
         func send(_ object: [String: Any]) throws {
             var data = try JSONSerialization.data(withJSONObject: object)
             data.append(10)
             try input.fileHandleForWriting.write(contentsOf: data)
         }
-        try send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "socius", "version": "0.1.0"]]])
-        for try await line in output.fileHandleForReading.bytes.lines {
+        return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-            if object["id"] as? Int == 1 {
-                if object["error"] != nil { throw ToolError.message("Could not initialize Codex. Update the Codex CLI and retry.") }
-                try send(["method": "initialized"])
-                try send(["id": 2, "method": "account/rateLimits/read"])
-            } else if object["id"] as? Int == 2 { return Data(line.utf8) }
+            try send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "socius", "version": "0.1.0"]]])
+            var buffer = Data()
+            for try await chunk in chunks {
+                try Task.checkCancellation()
+                buffer.append(chunk)
+                guard buffer.count < 4_000_000 else { throw ToolError.message("Codex returned an oversized response.") }
+                while let newline = buffer.firstIndex(of: 10) {
+                    let line = Data(buffer[..<newline])
+                    buffer.removeSubrange(...newline)
+                    guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+                    if object["id"] as? Int == 1 {
+                        if object["error"] != nil { throw ToolError.message("Could not initialize Codex. Update the Codex CLI and retry.") }
+                        try send(["method": "initialized"])
+                        try send(["id": 2, "method": "account/rateLimits/read"])
+                    } else if object["id"] as? Int == 2 { return line }
+                }
+            }
+            try Task.checkCancellation()
+            throw ToolError.message("Codex closed the connection without returning limits. Check your CLI sign-in and try again.")
+        } onCancel: {
+            // A silent child never yields another line on which to check cancellation.
+            continuation.finish(throwing: CancellationError())
+            if process.isRunning { process.terminate() }
         }
-        throw ToolError.message("Codex closed the connection without returning limits. Check your CLI sign-in and try again.")
     }
 }
 
 @Observable final class UsageService {
+    let diagnostics = UsageDiagnostics()
     var codex = ProviderUsage(message: "")
     var claude = ProviderUsage(message: "")
     private(set) var codexLoading = false
     private(set) var claudeLoading = false
     var busy: Bool { codexLoading || claudeLoading }
-    private var claudeExecutable: URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return [home + "/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-            .first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
-    }
+    private var claudeExecutable: URL? { CLIExecutableLocator.claude() }
     var claudeCLIAvailable: Bool { claudeExecutable != nil }
     var codexCLIAvailable: Bool { CodexUsageClient.executable() != nil }
     func loadInstalledCLIs() async {
@@ -110,8 +139,14 @@ enum CodexUsageClient {
     }
     func loadClaudeCLI(force: Bool = true) async {
         if !force, !claude.windows.isEmpty, let updated = claude.updatedAt, Date().timeIntervalSince(updated) < 60 { return }
-        guard !Task.isCancelled, let executable = claudeExecutable, !claudeLoading else { return }
+        guard !Task.isCancelled, !claudeLoading else { return }
+        guard let executable = claudeExecutable else {
+            diagnostics.record("Claude", "CLI discovery failed")
+            claude.message = "Claude Code CLI wasn’t found. The Claude desktop app alone doesn’t provide /usage."
+            return
+        }
         claudeLoading = true
+        diagnostics.record("Claude", "CLI usage request started")
         defer { claudeLoading = false }
         if claude.windows.isEmpty { claude.message = "Reading Claude CLI /usage…" }
         do {
@@ -120,22 +155,27 @@ enum CodexUsageClient {
             claude = ProviderUsage(windows: windows.map {
                 UsageWindow(id: $0.name, name: $0.name, used: $0.used, resetsAt: nil, resetDescription: $0.reset)
             }, updatedAt: Date(), message: "From Claude CLI /usage · account limits across models")
+            diagnostics.record("Claude", "CLI usage request succeeded")
         } catch is CancellationError {
+            diagnostics.record("Claude", "CLI usage request cancelled")
             claude.message = "Refresh interrupted. Reopen AI Credits to retry."
         } catch {
+            diagnostics.failure("Claude", error)
             claude.message = error.localizedDescription
         }
     }
     func authorizeClaude() async {
         guard !claudeLoading else { return }
         claudeLoading = true
+        diagnostics.record("Claude", "Optional account sync requested")
         defer { claudeLoading = false }
         do {
             let data = try await ClaudeAccountUsage.read(allowAuthorization: true)
             let windows = try UsageParser.claudeAccount(data)
             guard !windows.isEmpty else { throw ToolError.message("Claude did not return allowances.") }
             claude = ProviderUsage(windows: windows, updatedAt: Date(), message: "One-time account sync · token not retained")
-        } catch { claude.message = error.localizedDescription }
+            diagnostics.record("Claude", "Optional account sync succeeded")
+        } catch { diagnostics.failure("Claude", error); claude.message = error.localizedDescription }
     }
     let directory: URL
     init(directory: URL) {
@@ -143,17 +183,23 @@ enum CodexUsageClient {
     }
     func loadCodex(force: Bool = true) async {
         if !force, !codex.windows.isEmpty, let updated = codex.updatedAt, Date().timeIntervalSince(updated) < 60 { return }
-        guard !codexLoading else { return }
+        guard !Task.isCancelled, !codexLoading else { return }
         codexLoading = true; defer { codexLoading = false }
         guard let executable = CodexUsageClient.executable() else {
+            diagnostics.record("Codex", "CLI discovery failed")
             codex.message = "Codex CLI not found. Install it and sign in with your ChatGPT account."; return
         }
+        diagnostics.record("Codex", "CLI usage request started")
         do {
             let data = try await CodexUsageClient.read(executable: executable)
             codex.windows = try UsageParser.codex(data)
             codex.updatedAt = Date()
             codex.message = codex.windows.isEmpty ? "No subscription limits returned for this account." : "From your signed-in Codex account"
-        } catch { codex.message = error.localizedDescription }
+            diagnostics.record("Codex", "CLI usage request succeeded")
+        } catch is CancellationError {
+            diagnostics.record("Codex", "CLI usage request cancelled")
+            codex.message = "Refresh interrupted. Reopen AI Credits to retry."
+        } catch { diagnostics.failure("Codex", error); codex.message = error.localizedDescription }
     }
 
 }

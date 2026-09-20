@@ -58,6 +58,49 @@ import Testing
         }
     }
 
+    @Test func fullDesktopHostReachesDisplayBottomAndKeepsItAfterIdle() async throws {
+        let desktop = try Desktop()
+        defer { desktop.close() }
+        for screen in NSScreen.screens {
+            let home = desktop.pet.metrics.frame(around: CGPoint(x: screen.frame.midX, y: screen.frame.midY), in: screen.petMovementFrame)
+            desktop.dock.repositionHome(home)
+            try await desktop.settle()
+            let start = try desktop.petPoint()
+            try desktop.send(.leftMouseDown, at: start)
+            let end = CGPoint(x: start.x, y: screen.frame.minY + 1)
+            try desktop.send(.leftMouseDragged, at: end)
+            #expect(abs(desktop.panel.frame.minY + desktop.pet.metrics.feetFromBottom - screen.frame.minY) < 1)
+            try desktop.send(.leftMouseUp, at: end)
+            let placed = desktop.panel.frame
+            try await desktop.settle()
+            #expect(desktop.panel.frame == placed)
+            desktop.dock.simulateIdle()
+            try await desktop.settle()
+            desktop.dock.interact()
+            try await desktop.settle()
+            #expect(desktop.panel.frame == placed)
+        }
+    }
+
+    @Test func releasedDragReturnsToIdleEvenWithAStaleHover() async throws {
+        let desktop = try Desktop()
+        defer { desktop.close() }
+        try await desktop.settle()
+        let start = try desktop.petPoint()
+        try desktop.send(.leftMouseDown, at: start)
+        let end = CGPoint(x: start.x - 80, y: start.y + 40)
+        try desktop.send(.leftMouseDragged, at: end)
+        try desktop.send(.leftMouseUp, at: end)
+        desktop.dock.hover(true)
+        let released = Date()
+        desktop.dock.update(at: released.addingTimeInterval(9))
+        #expect(desktop.dock.phase == .engaged)
+        desktop.dock.update(at: released.addingTimeInterval(10))
+        #expect(desktop.dock.phase == .hiding || desktop.dock.phase == .tucked)
+        try await desktop.settle()
+        #expect(desktop.dock.phase == .tucked)
+    }
+
     @Test func shellRowIsOutsideThePetDragRegion() async throws {
         let desktop = try Desktop()
         defer { desktop.close() }

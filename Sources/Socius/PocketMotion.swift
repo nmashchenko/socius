@@ -23,6 +23,5 @@ struct PocketTail: Shape {
 }
 
 extension EnvironmentValues {
-    @Entry var pocketQuiet = false
     @Entry var pocketAttachedOnRight = true
 }

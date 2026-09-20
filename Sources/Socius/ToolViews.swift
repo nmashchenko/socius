@@ -6,13 +6,14 @@ import Combine
 @Observable final class ToolHub {
     var selected: PocketTool = .shelf
     var showingTool = false
+    var dismissRequest = 0
     var openRequest = 0
     var pocketHomeHeight: CGFloat = 310
     var toolHeight: CGFloat {
         switch selected {
-        case .settings: 540
+        case .settings: 610
         case .music: 280
-        case .shelf: 260
+        case .shelf: 310
         case .clipboard, .snippets: 290
         case .layouts:
             min(450, (store.data.layouts.isEmpty ? 320 : 300 + CGFloat(store.data.layouts.count - 1) * 90)
@@ -115,6 +116,8 @@ private struct UsageToolView: View {
                 provider("Claude", service.claude)
                 Text("Allowances are percentages of each provider’s limits. A missing or expired update is shown as unknown.")
                     .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                Button("Copy connection diagnostics", action: service.diagnostics.copy)
+                    .buttonStyle(PocketButtonStyle(compact: true))
             }.background(PocketScrollGutterFix())
         }.scrollIndicators(.hidden).task {
             await service.loadInstalledCLIs()
@@ -153,7 +156,7 @@ private struct UsageToolView: View {
                  : "Reads account and model limits through your signed-in Claude CLI’s /usage command. No model request. The CLI manages its own sign-in; Socius does not read its credentials.")
                 .font(.system(size: 11)).foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            if name == "Claude" && !service.claudeCLIAvailable {
+            if name == "Claude" && !service.claudeLoading && service.claude.windows.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Your sign-in stays private").font(.system(size: 14, weight: .semibold))
                     Text("A one-time sync reads your Claude sign-in from Keychain and sends its token only to Anthropic over HTTPS. Socius never saves or logs it, and sends nothing to any other service.")

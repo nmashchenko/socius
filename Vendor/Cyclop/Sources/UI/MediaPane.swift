@@ -216,14 +216,16 @@ struct MediaPane: View {
                 .foregroundStyle(Theme.tertiary)
             // Status, not instruction: an empty pane on its own would not say
             // whether nothing is playing or nothing could be read.
-            Text(media.spotifyInstalled ? "Play something in Spotify" : "Spotify Desktop required")
+            Text(media.readError != nil ? "Spotify access unavailable" : media.spotifyInstalled ? "Play something in Spotify" : "Spotify Desktop required")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Theme.secondary)
-            Text(media.spotifyInstalled ? "Open the desktop app to start listening." : "Install the Spotify desktop app to use Music.")
+            Text(media.readError ?? (media.spotifyInstalled ? "Open the desktop app to start listening." : "Install the Spotify desktop app to use Music."))
                 .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                .multilineTextAlignment(.center)
             Text("Browser player integration is coming later.")
                 .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
             if media.spotifyInstalled {
+                if media.readError != nil { Button("Retry", action: media.retrySpotify).buttonStyle(.bordered) }
                 Button("Open Spotify") { media.openSpotify() }.buttonStyle(.bordered)
             } else {
                 Link("Get Spotify", destination: URL(string: "https://www.spotify.com/download/mac/")!)

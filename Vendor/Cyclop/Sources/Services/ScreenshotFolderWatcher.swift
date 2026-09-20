@@ -17,6 +17,9 @@ final class ScreenshotFolderWatcher {
     /// A new screenshot file, ready to go on the shelf.
     var onImage: ((URL) -> Void)?
     var onAccessError: (() -> Void)?
+    var onStateChanged: (() -> Void)?
+    private(set) var activeFolder: URL?
+    private var generation = 0
     private var accessPanel: NSOpenPanel?
 
     private let enabledKey = "screenshotFolderWatch.enabled"
@@ -105,6 +108,9 @@ final class ScreenshotFolderWatcher {
     func stop() {
         source?.cancel()
         source = nil
+        generation += 1
+        activeFolder = nil
+        onStateChanged?()
     }
 
     @discardableResult
@@ -117,7 +123,7 @@ final class ScreenshotFolderWatcher {
         stop()
         seen = names
         let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: .write, queue: .main
+            fileDescriptor: fd, eventMask: [.write, .delete, .rename, .revoke], queue: .main
         )
         // Очередь здесь — главная, и это условие работоспособности, а не
         // удобство. Замыкание, записанное внутри `@MainActor`-типа, изоляцию
@@ -126,10 +132,21 @@ final class ScreenshotFolderWatcher {
         // каждом вызове. С фоновой очередью проверка не прошла бы, и процесс
         // снимался бы на первом же изменении папки. Менять `queue` без
         // `@Sendable` на обоих обработчиках нельзя.
-        source.setEventHandler { [weak self] in self?.scan(folder) }
+        let currentGeneration = generation
+        source.setEventHandler { [weak self] in
+            guard let self, self.generation == currentGeneration, let source = self.source else { return }
+            if !source.data.intersection([.delete, .rename, .revoke]).isEmpty {
+                self.disable()
+                self.onAccessError?()
+                return
+            }
+            self.scan(folder)
+        }
         source.setCancelHandler { close(fd) }
         source.resume()
         self.source = source
+        activeFolder = folder
+        onStateChanged?()
         return true
     }
 
@@ -137,13 +154,20 @@ final class ScreenshotFolderWatcher {
     /// file, rename, delete — so this diffs against `seen` rather than
     /// trusting the event to mean "a screenshot arrived".
     private func scan(_ folder: URL) {
-        for url in entries(in: folder) {
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            stop()
+            PocketDefaults.shared.set(false, forKey: enabledKey)
+            onAccessError?()
+            return
+        }
+        seen.formIntersection(urls.map(\.lastPathComponent))
+        for url in urls {
             let name = url.lastPathComponent
             guard !seen.contains(name) else { continue }
             seen.insert(name)
             guard let type = UTType(filenameExtension: url.pathExtension),
                   type.conforms(to: .image) else { continue }
-            waitForStableSize(url, lastSize: -1, attempt: 0)
+            waitForStableSize(url, lastSize: -1, attempt: 0, generation: generation)
         }
     }
 
@@ -151,7 +175,8 @@ final class ScreenshotFolderWatcher {
     /// steady size costs nothing and guards against a half-written file on a
     /// slow volume — the same caution `ClipboardStore.awaitImage` uses for
     /// screenshots arriving over Continuity.
-    private func waitForStableSize(_ url: URL, lastSize: Int, attempt: Int) {
+    private func waitForStableSize(_ url: URL, lastSize: Int, attempt: Int, generation: Int) {
+        guard generation == self.generation, source != nil else { return }
         guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int else {
             return
         }
@@ -161,13 +186,8 @@ final class ScreenshotFolderWatcher {
         }
         guard attempt < 10 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.waitForStableSize(url, lastSize: size, attempt: attempt + 1)
+            self?.waitForStableSize(url, lastSize: size, attempt: attempt + 1, generation: generation)
         }
     }
 
-    private func entries(in folder: URL) -> [URL] {
-        (try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
-        )) ?? []
-    }
 }

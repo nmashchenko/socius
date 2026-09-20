@@ -58,7 +58,7 @@ jobs:
           echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
           echo "RELEASE_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
       - name: Tests
-        run: swift test --disable-sandbox
+        run: swift test --disable-sandbox --no-parallel
       - name: Import signing identity into a temporary Keychain
         env:
           P12_BASE64: ${{ secrets.DEVELOPER_ID_P12 }}

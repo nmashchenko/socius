@@ -13,19 +13,8 @@ struct PetSettingsView: View {
                         if value.count > 30 { model.name = String(value.prefix(30)) }
                     }
             }
-            VStack(alignment: .leading, spacing: PocketMetrics.controlInset) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Quiet mode").font(.system(size: 12, weight: .semibold))
-                        Text("Less motion. No reminder bubbles.")
-                            .font(.system(size: 11)).foregroundStyle(Palette.muted)
-                    }
-                    Spacer()
-                    Toggle("Quiet mode", isOn: $model.quiet)
-                        .toggleStyle(PocketToggleStyle(showsLabel: false)).accessibilityLabel("Quiet mode")
-                }
-                PetShortcutControl(model: model)
-            }
+            PetAppearanceControls(model: model)
+            PetShortcutControl(model: model)
             Divider().opacity(0.4)
             VStack(alignment: .leading, spacing: PocketMetrics.controlInset) {
                 Text("In your pocket").font(.system(size: 12, weight: .semibold))

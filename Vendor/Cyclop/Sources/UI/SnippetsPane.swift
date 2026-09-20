@@ -10,7 +10,7 @@ struct SnippetsPane: View {
     /// them can be typed into at a time and the pane switches between them.
     private enum Field { case search, label, text }
 
-    @FocusState private var focused: Field?
+    @State private var focused: Field?
     @State private var isAdding = ProcessInfo.processInfo.arguments.contains("--snippet-editor")
     @State private var draftLabel = ""
     @State private var draftText = ""
@@ -19,6 +19,9 @@ struct SnippetsPane: View {
         VStack(spacing: 10) {
             if isAdding { editor } else { search }
             if snippets.fileBroken { brokenNotice }
+            if let error = snippets.writeError {
+                Text(error).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            }
             list
         }
         .onChange(of: wantsKeyboard) { _, wants in
@@ -38,16 +41,9 @@ struct SnippetsPane: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.tertiary)
-            TextField("", text: $snippets.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.ink)
-                .tint(Theme.secondary)
-                .focused($focused, equals: .search)
-                .onKeyPress(.escape) {
-                    snippets.query = ""
-                    return .handled
-                }
+            SnippetInput(placeholder: "Search snippets", text: $snippets.query, focused: focused == .search,
+                         onFocus: { focused = .search }, submit: beginAdding,
+                         cancel: { snippets.query = "" })
             if !snippets.query.isEmpty {
                 Button { snippets.query = "" } label: {
                     Image(systemName: "xmark")
@@ -68,13 +64,12 @@ struct SnippetsPane: View {
             .help(localized("Add a snippet"))
         }
         .padding(.horizontal, 9)
-        .frame(height: 24)
+        .frame(height: PocketMetrics.controlHeight)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Theme.surface)
         )
         .contentShape(Rectangle())
-        .onTapGesture { focused = .search }
         // Same reason as the editor: the row asks for the caret once it is
         // actually on screen, so arriving on the tab and coming back from the
         // editor both land the same way.
@@ -107,12 +102,14 @@ struct SnippetsPane: View {
     private var editor: some View {
         HStack(spacing: PocketMetrics.rowGap) {
             SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focused == .label,
-                             onFocus: { focused = .label }, submit: commit)
+                             onFocus: { focused = .label }, submit: commit, cancel: cancelAdding)
                 .frame(width: 92, height: PocketMetrics.controlHeight)
+                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
 
             SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focused == .text,
-                             onFocus: { focused = .text }, submit: commit)
+                             onFocus: { focused = .text }, submit: commit, cancel: cancelAdding)
                 .frame(height: PocketMetrics.controlHeight)
+                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
 
             Button { commit() } label: {
                 Image(systemName: "checkmark")
@@ -136,12 +133,7 @@ struct SnippetsPane: View {
             .buttonStyle(.plain)
             .pointerStyle(.default)
         }
-        .padding(.horizontal, 4)
         .frame(height: PocketMetrics.controlHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Theme.ink.opacity(0.065))
-        )
         // Asked for here rather than where the editor is switched on: at that
         // moment this field does not exist yet, and a focus request aimed at a
         // view that is not in the hierarchy is simply dropped. The row would
@@ -178,7 +170,7 @@ struct SnippetsPane: View {
 
     private func commit() {
         guard !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        snippets.add(label: draftLabel, text: draftText)
+        guard snippets.add(label: draftLabel, text: draftText) else { return }
         // Straight into another one: adding snippets comes in runs, and the
         // list underneath already shows what has landed.
         draftLabel = ""
@@ -236,7 +228,8 @@ private struct SnippetRow: View {
     @State private var editing = false
     @State private var draftLabel = ""
     @State private var draftText = ""
-    @FocusState private var focus: Field?
+    @State private var focus: Field?
+    @State private var focusGroup = UUID()
 
     private enum Field { case label, text }
 
@@ -265,16 +258,18 @@ private struct SnippetRow: View {
                 // alike is the whole of saying so. Bare fields inside the row
                 // read as text that had lost its alignment.
                 SnippetInput(placeholder: localized("Name"), text: $draftLabel, focused: focus == .label,
-                             onFocus: { focus = .label }, submit: commit)
-                .frame(width: 92, height: 28)
-                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .label ? 0.35 : 0.1), lineWidth: 1))
+                             onFocus: { focus = .label }, submit: commit, cancel: cancel,
+                             focusGroup: focusGroup, onBlur: commit)
+                .frame(width: 92, height: PocketMetrics.controlHeight)
+                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius).stroke(Theme.ink.opacity(focus == .label ? 0.35 : 0.1), lineWidth: 1))
 
                 SnippetInput(placeholder: localized("Text"), text: $draftText, focused: focus == .text,
-                             onFocus: { focus = .text }, submit: commit)
+                             onFocus: { focus = .text }, submit: commit, cancel: cancel,
+                             focusGroup: focusGroup, onBlur: commit)
                 .frame(height: PocketMetrics.controlHeight)
-                .background(Theme.ink.opacity(0.035), in: RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
+                .background(PocketMetrics.inputFill, in: RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: PocketMetrics.cornerRadius).stroke(Theme.ink.opacity(focus == .text ? 0.35 : 0.1), lineWidth: 1))
 
                 Button { commit() } label: {
                     Image(systemName: "checkmark")
@@ -306,8 +301,7 @@ private struct SnippetRow: View {
                 )
             }
             Spacer(minLength: 6)
-            // Only under the pointer: a row of crosses would compete with the
-            // snippets themselves for a glance.
+            // Cyclop's compact trailing actions reveal under the pointer.
             if hovering, !editing {
                 if privacy.covers(.snippets) {
                     RevealEye(hidden: hidden) { privacy.toggle("snippet.\(item.id)") }
@@ -323,7 +317,7 @@ private struct SnippetRow: View {
                         .foregroundStyle(index == 0 ? Theme.tertiary : Theme.secondary)
                 }
                 .buttonStyle(.plain)
-                .disabled(index == 0)
+                .disabled(index == 0).accessibilityLabel("Move snippet up")
 
                 Button { move(to: index + 1) } label: {
                     Image(systemName: "chevron.down")
@@ -331,7 +325,7 @@ private struct SnippetRow: View {
                         .foregroundStyle(isLast ? Theme.tertiary : Theme.secondary)
                 }
                 .buttonStyle(.plain)
-                .disabled(isLast)
+                .disabled(isLast).accessibilityLabel("Move snippet down")
 
                 Button { remove() } label: {
                     Image(systemName: "xmark")
@@ -341,43 +335,36 @@ private struct SnippetRow: View {
                 .buttonStyle(.plain)
                 .pointerStyle(.default)
                 .help(localized("Delete"))
+                .accessibilityLabel("Delete snippet")
             }
         }
         .padding(.horizontal, editing ? 6 : 9)
-        .frame(height: editing ? 44 : 32)
+        .frame(height: editing ? PocketMetrics.controlHeight + 8 : 26)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(editing || hovering ? Theme.surfaceHover : Theme.surface)
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        // Double first: SwiftUI hands a tap to the last matching gesture, and
-        // with the single one declared first a double click would only ever
-        // copy. The first click of a double still copies — harmless, and the
-        // alternative is delaying every single click to see if a second lands.
         .onTapGesture(count: 2) { beginEditing() }
-        .onTapGesture {
-            snippets.copy(item)
-            // Emptying the search lets go of the panel: nothing is being typed
-            // any more, so nothing needs to hold it open.
-            snippets.query = ""
-            flash($justCopied)
-        }
+        .onTapGesture { if !editing { copy() } }
         .animation(Theme.contentAnimation, value: hovering)
         .animation(Theme.contentAnimation, value: justCopied)
         .animation(Theme.contentAnimation, value: editing)
         .onExitCommand { cancel() }
-        // Losing the focus saves: clicking away from a row one has just edited
-        // is not a way of throwing the edit out — Esc is.
-        .onChange(of: focus) { _, now in
-            if editing, now == nil { commit() }
-        }
         // The panel folds by itself when the pointer leaves, and the row goes
         // with it. Whatever was typed by then has to survive that.
         .onDisappear { if editing { commit() } }
     }
 
+    private func copy() {
+        snippets.copy(item)
+        snippets.query = ""
+        flash($justCopied)
+    }
+
     private func beginEditing() {
+        guard !editing else { return }
         draftLabel = item.label
         draftText = item.text
         editing = true
@@ -400,8 +387,8 @@ private struct SnippetRow: View {
 
     private func commit() {
         guard editing else { return }
+        guard snippets.update(item, label: draftLabel, text: draftText) else { return }
         editing = false
         focus = nil
-        snippets.update(item, label: draftLabel, text: draftText)
     }
 }

@@ -40,36 +40,37 @@ AI Credits automatically uses installed Codex and Claude CLIs concurrently, with
 
 If Claude CLI is missing, an explicit one-time Keychain sync is offered alongside Install CLI. Its notice explains that the token is sent only to Anthropic over HTTPS, never saved or logged, and not sent elsewhere. This is authenticated network access, not entirely local operation. Missing Codex CLI offers installation because API keys cannot report ChatGPT subscription allowances.
 
-Developer playground includes live process memory footprint (MB, once per second), peak while open, editable idle/peek delays, a 5-second demo preset and production reset. Timing overrides affect only the playground preview.
+The developer dashboard controls the desktop pet directly. It includes live process memory footprint (MB, once per second), peak while open, editable idle/peek delays, a 5-second demo preset and a normal 10s/30s reset.
 
 ## Pet interactions
 
 - Click for a short trail of hearts and the pocket.
 - Feed a pixel shrimp, find a pearl under a shell, or curl up for a nap.
 - Idle tentacles ripple; sleeping uses gentle breathing and bubbles.
-- **Production timings: 30 seconds to hide and 5 minutes between reminder peeks.** Socius peeks from the nearest horizontal edge at the same height. Click to return; hovering holds its position.
+- **Normal timings: 10 seconds to hide and 30 seconds between reminder peeks.** Socius peeks from the nearest horizontal edge at the same height. Click to return. Pointer entry and exit restart the idle timer; a stationary pointer and clicks in other apps do not keep resetting it.
+- Fullscreen apps and immersive video hide the pet and pocket. The pet returns when fullscreen ends.
 - Right-click **Keep [pet name] here** to disable auto-hide; the label uses your chosen pet name.
 - Closing the pocket returns the pet to idle immediately. Feeding and play keep it in place until the activity finishes, then it returns to idle.
-- Travel uses the screen display link targeting 60 fps. Quiet mode and macOS Reduce Motion reduce movement.
-- Fullness declines over roughly 12 waking hours; spirits over 18. At 20% or lower in either need, Socius asks for care before opening tools; Settings remains accessible from the menu bar. Feeding restores 45 fullness, play restores 45 spirits, and petting restores 8 spirits. Sleep pauses decay.
+- Travel uses the screen display link targeting 60 fps. macOS Reduce Motion reduces movement.
+- Fullness declines over roughly 12 waking hours; spirits over 18. At 20% or lower in either need, Socius asks for care before opening tools; Settings remains accessible from the menu bar. Feeding restores 45 fullness, play restores 45 spirits, and petting restores 2 spirits. Sleep pauses decay.
 - Pet care state still resets on relaunch; tool data persists independently.
 
-## Developer playground
+## Developer dashboard
 
 ```sh
 open build/Socius.app --args --developer
 ```
 
-After onboarding, the Interaction playground opens automatically in developer mode and is also accessible from the menu-bar paw or Socius’s context menu. Its sidebar has mood presets, neglect, care, idle, and reminder simulations. The playground owns a separate pet and preview timers; care, quiet mode, and idle simulations do not change the desktop pet. Replay onboarding uses the real desktop pet in a full-screen introduction, then returns it to idle. Tool selection is preview-only; use the desktop pocket for live tools. Ordinary launches omit the playground.
+The developer dashboard opens in developer mode and is also accessible from the menu-bar paw or Socius’s context menu. Mood presets, care, appearance, idle, reminder and timing controls operate on the single desktop pet. Open pocket opens its real tools. Replay onboarding temporarily moves that same pet into the introduction, then returns it to the desktop. Ordinary launches omit the dashboard.
 
 For a direct tool launch: `open build/Socius.app --args --tool Notes` (quit an already-running instance first). A native preview with disposable sample data can be rendered with `build/Socius.app/Contents/MacOS/Socius --render-preview --tool Notes`.
 
 ## Checks
 
 ```sh
-swift test --disable-sandbox
+swift test --disable-sandbox --no-parallel
 # Optional read-only check against the signed-in Codex account:
-SOCIUS_LIVE_USAGE_TEST=1 swift test --disable-sandbox --filter liveCodexUsageConnection
+SOCIUS_LIVE_USAGE_TEST=1 swift test --disable-sandbox --no-parallel --filter liveCodexUsageConnection
 ```
 
 Tests cover pet interactions, display-linked travel, persistence and corrupt-file preservation, clipboard privacy/retention, screenshot ordering, usage parsing and RPC handshake, Claude settings restoration, and layout geometry. Spotify authorization/playback and Accessibility window control require manual checks on the host Mac.
@@ -86,7 +87,7 @@ Socius’s pocket tools are inspired by [Cyclop](https://github.com/akalikbergen
 
 ## Personalize your pet
 
-Open **Settings** in the pocket or menu bar to name your pet, enable Quiet mode, or open a bug report on GitHub. Name, quiet mode and hidden pocket tools persist locally. Use Show in pocket to choose which built-in tools are visible. The first launch introduces your pet against a softly blurred backdrop; Skip and Escape dismiss it. After the greeting, the pet retreats to the screen edge. Later launches start idle. Developers can replay the greeting from the playground’s Replay onboarding button or with `--onboarding`.
+Open **Settings** in the pocket or menu bar to name your pet, choose a color, adjust its size, customize the summon shortcut, or open a bug report on GitHub. Appearance and hidden pocket tools persist locally. Size adapts to each display, with a manual adjustment. Use In your pocket to choose which built-in tools are visible. The first launch explains the pocket, care, and shortcuts, then lets you choose your pet’s appearance. It never advances automatically. Skip finishes the introduction; Escape or closing it cancels safely, so unfinished onboarding returns next launch. Use the menu-bar paw’s Show introduction command to replay it anytime. After onboarding, the pet retreats to the screen edge. Later launches start idle. Developers can replay the greeting from the dashboard’s Replay onboarding button or with `--onboarding`.
 
 Bring the pet to your cursor with **Control–Option–M**. Record another global combination in Settings; shortcut preferences stay on this Mac. Shortcuts require Command, Control or Option, and unavailable combinations show an error.
 
@@ -95,3 +96,5 @@ Choose **Quit Socius** in Settings, the pet’s right-click menu, or the menu ba
 ## Releases
 
 See [release preparation](docs/releasing.md) for signed, notarized DMG builds and [0.1.0 beta notes](docs/releases/0.1.0-beta.1.md). Local packaging uses a Keychain profile. GitHub release automation requires repository signing secrets and creates a draft prerelease for review; it does not publish automatically. CI passing alone does not mean a notarized installer is available.
+
+Connection troubleshooting: AI Credits includes **Copy connection diagnostics**. It copies recent connection stages and error types, excluding credentials, provider output and user paths. Development builds can also launch with `--trace-interactions` to record pointer geometry in the system temporary directory’s `socius-interactions.log`; normal launches do not record this trace.

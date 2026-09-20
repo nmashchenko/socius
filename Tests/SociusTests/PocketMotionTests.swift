@@ -17,6 +17,12 @@ import Testing
         try await Task.sleep(for: .milliseconds(100))
         #expect(window.childWindows?.count == 1)
         #expect(window.childWindows?.first?.isOpaque == false)
+        let pocket = try #require(window.childWindows?.first)
+        let previousX = pocket.frame.minX
+        window.setContentSize(CGSize(width: 100, height: 100))
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(abs(pocket.frame.minX - (previousX - 40)) < 1)
         host.rootView = AnchoredPocket(isPresented: .constant(false), model: model, hub: hub)
         try await Task.sleep(for: .milliseconds(100))
         #expect(window.childWindows?.isEmpty != false)
@@ -45,4 +51,33 @@ import Testing
         #expect(!hub.showingTool)
         window.orderOut(nil)
     }
+    @Test func onboardingClosesAnOpenPocketAndBlocksQueuedReopening() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OnboardingPocketTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hub = ToolHub(store: ToolStore(directory: directory))
+        let model = PetModel()
+        let host = NSHostingView(rootView: AnchoredPocket(isPresented: .constant(true), model: model, hub: hub))
+        let window = PetPanel(contentRect: CGRect(x: 500, y: 400, width: 140, height: 140), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        let pocket = try #require(window.childWindows?.first)
+        #expect(pocket.isVisible)
+        model.onboardingActive = true
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!pocket.isVisible)
+        #expect(window.childWindows?.isEmpty != false)
+        // A stale presentation request must not bring the pocket back.
+        host.rootView = AnchoredPocket(isPresented: .constant(true), model: model, hub: hub)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(window.childWindows?.isEmpty != false)
+        window.suspendDesktopPresentation()
+        #expect(window.contentView == nil)
+        #expect(window.ignoresMouseEvents)
+        #expect(!window.isVisible)
+    }
+
 }

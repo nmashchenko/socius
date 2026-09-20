@@ -74,6 +74,7 @@ final class SnippetStore: ObservableObject {
     /// and "read as it is" are different answers, and only the second makes
     /// writing back safe (#7).
     @Published private(set) var fileBroken = false
+    @Published private(set) var writeError: String?
 
     /// Matches the name and the value alike: one remembers an address either by
     /// what it is called or by what is in it, rarely reliably by both.
@@ -104,7 +105,7 @@ final class SnippetStore: ObservableObject {
         guard let data = try? Data(contentsOf: file) else {
             // No file is an honest empty list, and writing one is safe.
             items = []
-            fileBroken = false
+            fileBroken = FileManager.default.fileExists(atPath: file.path)
             return
         }
         do {
@@ -116,7 +117,7 @@ final class SnippetStore: ObservableObject {
             // say so: silence here is what used to turn a stray comma into a
             // lost file.
             fileBroken = true
-            NSLog("Cyclop: snippets.json is not readable: \(error.localizedDescription)")
+            NSLog("Socius: snippets.json is not readable: \(error.localizedDescription)")
         }
     }
 
@@ -125,47 +126,38 @@ final class SnippetStore: ObservableObject {
     /// Re-reads first, because the file is also edited by hand and the copy in
     /// memory is only as fresh as the last visit to the tab. Writing over it
     /// blind would silently undo whatever was added in an editor meanwhile.
-    func add(label: String, text: String) {
+    @discardableResult
+    func add(label: String, text: String) -> Bool {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        let snippet = Snippet(label: label.trimmingCharacters(in: .whitespacesAndNewlines), text: value)
+        guard !value.isEmpty else { return false }
         reload()
-        // A file that could not be read must not be written. The snippet is
-        // dropped rather than kept in memory as if saved: pretending would
-        // trade a visible refusal now for a silent loss at relaunch.
-        guard !fileBroken else {
-            NSLog("Cyclop: refusing to write over an unreadable snippets.json")
-            return
-        }
-        // Only an exact duplicate — same name and same value — is dropped, and
-        // it is dropped because two identical rows are indistinguishable in the
-        // list anyway. Two snippets sharing a name but not a value are kept
-        // apart: see `Snippet.id`.
-        items.removeAll { $0.id == snippet.id }
-        items.insert(snippet, at: 0)
-        persist()
+        guard !fileBroken else { return false }
+        let snippet = Snippet(label: label.trimmingCharacters(in: .whitespacesAndNewlines), text: value)
+        var updated = items.filter { $0.id != snippet.id }
+        updated.insert(snippet, at: 0)
+        return persist(updated)
     }
 
     func remove(_ snippet: Snippet) {
-        items.removeAll { $0.id == snippet.id }
-        persist()
+        reload()
+        guard !fileBroken else { return }
+        _ = persist(items.filter { $0.id != snippet.id })
     }
 
     /// Moves a snippet to another position and writes the new order.
     ///
-    /// The order is the file's order, so dragging a row is a real edit and not
-    /// a view-only arrangement — the one people reach for is meant to end up on
-    /// top and stay there.
-    ///
-    /// Unlike `add` and `update`, this does not re-read the file first: a drag
-    /// is a continuous gesture, and re-reading mid-gesture would swap the list
-    /// out from under the row being dragged.
+    /// Arrow clicks apply their relative move to the latest file contents.
     func move(_ snippet: Snippet, to index: Int) {
+        guard let previous = items.firstIndex(where: { $0.id == snippet.id }) else { return }
+        let offset = index - previous
+        reload()
+        guard !fileBroken else { return }
         guard let current = items.firstIndex(where: { $0.id == snippet.id }) else { return }
-        let target = max(0, min(index, items.count - 1))
+        let target = max(0, min(current + offset, items.count - 1))
         guard target != current else { return }
-        items.insert(items.remove(at: current), at: target)
-        persist()
+        var updated = items
+        updated.insert(updated.remove(at: current), at: target)
+        _ = persist(updated)
     }
 
     /// Edits a snippet in place, keeping its position in the list.
@@ -178,41 +170,36 @@ final class SnippetStore: ObservableObject {
     /// An emptied value cancels the edit rather than deleting the row. Deleting
     /// already has its own ✕, and losing a snippet to a stray ⌘A is a poor
     /// trade for saving a press.
-    func update(_ snippet: Snippet, label: String, text: String) {
+    @discardableResult
+    func update(_ snippet: Snippet, label: String, text: String) -> Bool {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
+        guard !value.isEmpty else { return false }
         let edited = Snippet(label: label.trimmingCharacters(in: .whitespacesAndNewlines), text: value)
-        guard edited != snippet else { return }
-
+        guard edited != snippet else { return true }
         reload()
-        // A file that could not be read must not be written over.
-        guard !fileBroken else {
-            NSLog("Cyclop: refusing to write over an unreadable snippets.json")
-            return
+        guard !fileBroken else { return false }
+        var updated = items.filter { $0.id != edited.id || $0.id == snippet.id }
+        guard let index = updated.firstIndex(where: { $0.id == snippet.id }) else {
+            writeError = "This snippet changed outside Socius. Reopen it to edit the latest version."
+            return false
         }
-        // An edit that turns this row into an exact copy of another one leaves
-        // a single row, for the same reason `add` does.
-        items.removeAll { $0.id == edited.id && $0.id != snippet.id }
-        // Found after the removal, never before it: a copy standing above this
-        // row shifts it up by one, and an index taken beforehand then points at
-        // the neighbour. Written there, the edit destroys a snippet nobody
-        // touched and leaves the edited one exactly as it was.
-        guard let index = items.firstIndex(where: { $0.id == snippet.id }) else { return }
-        items[index] = edited
-        persist()
+        updated[index] = edited
+        return persist(updated)
     }
 
-    /// Pretty-printed, and slashes left alone: the file is meant to be opened
-    /// and edited by hand, and `\/` in every URL would be the app making that
-    /// harder for its own convenience.
-    private func persist() {
-        guard !fileBroken else { return }
+    private func persist(_ updated: [Snippet]) -> Bool {
+        guard !fileBroken else { return false }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         do {
-            try encoder.encode(items).write(to: file, options: .atomic)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try encoder.encode(updated).write(to: file, options: .atomic)
+            items = updated
+            writeError = nil
+            return true
         } catch {
-            NSLog("Cyclop: cannot write snippets.json: \(error.localizedDescription)")
+            writeError = "Couldn’t save snippets. Keep a copy of your draft before closing this pane. Check file access and try again."
+            return false
         }
     }
 

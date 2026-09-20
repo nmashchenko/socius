@@ -108,12 +108,12 @@ struct PocketView: View {
                 if let hub, hub.showingTool {
                     PocketToolView(hub: hub, pet: model, back: { hub.showingTool = false; hub.store.notice = nil }, close: close)
                         .frame(width: 420, height: hub.toolHeight)
-                        .transition(PocketMotion.page(forward: true, reduced: reduceMotion || model.quiet))
+                        .transition(PocketMotion.page(forward: true, reduced: reduceMotion))
                 } else {
                     home
                         .frame(width: 340).fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { homeHeight = $0; hub?.pocketHomeHeight = $0 }
-                        .transition(PocketMotion.page(forward: false, reduced: reduceMotion || model.quiet))
+                        .transition(PocketMotion.page(forward: false, reduced: reduceMotion))
                 }
             }
             .frame(width: hub?.showingTool == true ? 420 : 340, height: hub?.showingTool == true ? (hub?.toolHeight ?? 450) : homeHeight)
@@ -125,8 +125,7 @@ struct PocketView: View {
                     .rotationEffect(.degrees(attachedOnRight ? 0 : 180))
                     .offset(x: attachedOnRight ? 8 : -8)
             }
-            .animation(reduceMotion || model.quiet ? .easeOut(duration: 0.12) : PocketMotion.animation, value: hub?.showingTool)
-            .environment(\.pocketQuiet, model.quiet)
+            .animation(reduceMotion ? .easeOut(duration: 0.12) : PocketMotion.animation, value: hub?.showingTool)
         } else {
             home
         }
@@ -198,14 +197,14 @@ struct DesktopPetView: View {
                         .offset(x: presence.reminder == nil ? 0 : -presence.offset)
                         .transition(.opacity)
                 }
-            }.frame(height: 70)
-            InteractivePet(model: model, size: 140, clicked: clickPet, idleMotion: presence.phase == .engaged && !presence.dragging,
+            }.frame(height: model.metrics.speechHeight)
+            InteractivePet(model: model, size: model.metrics.size, clicked: clickPet, idleMotion: presence.phase == .engaged && !presence.dragging,
                shyEdge: [.tucked, .peeking].contains(presence.phase) ? presence.leftEdge : nil)
                 .rotationEffect(.degrees(model.mood != .sleeping ? presence.tilt : 0))
                 .background(PetPointerInput(presence: presence, clicked: clickPet, dragBegan: {
                     waitingForReturn = false
                     setPocketOpen(false, retreatOnClose: false)
-                }).frame(width: 140, height: 140))
+                }).frame(width: model.metrics.size, height: model.metrics.size))
                 .onHover { presence.hover($0) }
                 .background(AnchoredPocket(isPresented: Binding(get: { pocketOpen }, set: { setPocketOpen($0) }), model: model, hub: hub))
                 .contextMenu {
@@ -215,29 +214,36 @@ struct DesktopPetView: View {
                     Divider()
                     Button(presence.enabled ? "Keep \(model.displayName) here" : "Auto-hide at the edge") { presence.enabled.toggle() }
                     if let openStudio {
-                        Button("Interaction playground", action: openStudio)
+                        Button("Developer dashboard", action: openStudio)
                     }
                     Divider()
                     Button("Quit Socius") { NSApp.terminate(nil) }
                 }
             ZStack {
                 Color.clear
-                if model.shellGameActive { ShellGameView(model: model) }
-            }.frame(height: 40)
-        }.frame(width: 240, height: 270)
+                if model.shellGameActive { ShellGameView(model: model).scaleEffect(model.desktopScale) }
+            }.frame(height: model.metrics.footerHeight)
+        }.frame(width: model.metrics.panelSize.width, height: model.metrics.panelSize.height)
             .offset(x: presence.offset)
-            .frame(width: 240, height: 270).clipped()
+            .frame(width: model.metrics.panelSize.width, height: model.metrics.panelSize.height).clipped()
             // Position and pose share the display-link clock; no second SwiftUI spring.
             .onChange(of: hub.store.isChoosingFiles) { presence.menuOpen = pocketOpen || hub.store.isChoosingFiles }
-            .onChange(of: hub.store.filePickerFinished) { presence.interact(); setPocketOpen(true) }
+            .onChange(of: hub.store.filePickerFinished) {
+                guard !model.desktopSuppressed else { return }
+                presence.interact(); setPocketOpen(true)
+            }
             .onChange(of: presence.phase) {
                 if waitingForReturn && presence.phase == .engaged {
                     waitingForReturn = false
                     setPocketOpen(true)
                 }
             }
+            .onChange(of: hub.dismissRequest) { setPocketOpen(false, retreatOnClose: false) }
+            .onChange(of: model.desktopSuppressed) {
+                if model.desktopSuppressed { setPocketOpen(false, retreatOnClose: false) }
+            }
             .onChange(of: hub.openRequest, initial: true) {
-                guard hub.openRequest > 0 else { return }
+                guard hub.openRequest > 0, !model.desktopSuppressed else { return }
                 presence.interact(); requestPocket()
             }
             .onChange(of: model.mood) { presence.update(at: Date()) }
@@ -251,6 +257,7 @@ struct DesktopPetView: View {
         else { model.pet(); hub.showingTool = false; requestPocket() }
     }
     private func setPocketOpen(_ open: Bool, retreatOnClose: Bool = true) {
+        guard !open || !model.desktopSuppressed else { return }
         if !open { waitingForReturn = false }
         guard pocketOpen != open else { return }
         pocketOpen = open
@@ -259,6 +266,7 @@ struct DesktopPetView: View {
         else if retreatOnClose { presence.pocketClosed() }
     }
     private func requestPocket() {
+        guard !model.desktopSuppressed else { return }
         if presence.phase == .engaged { setPocketOpen(true) }
         else { waitingForReturn = true }
     }

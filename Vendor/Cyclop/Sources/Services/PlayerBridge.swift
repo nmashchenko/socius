@@ -52,15 +52,30 @@ struct PlayerState {
 /// happens on `queue` and in `URLSession`, and only the answer comes home.
 @MainActor
 enum PlayerBridge {
-    private static let queue = DispatchQueue(label: "com.cyclop.applescript", qos: .utility)
+    enum ReadError: Error, Equatable {
+        case scripting(Int)
+        var message: String {
+            switch self {
+            case .scripting(-1743): "Allow Socius to control Spotify in System Settings → Privacy & Security → Automation, then retry."
+            default: "Couldn’t read Spotify. Open the desktop app and retry."
+            }
+        }
+    }
+    private static let queue = DispatchQueue(label: "app.socius.applescript", qos: .utility)
 
     // MARK: - State
 
     static func state(of app: PlayerApp, completion: @escaping (PlayerState?) -> Void) {
-        guard app.isRunning else { return completion(nil) }
-        runScript(stateScript(for: app)) { descriptor in
-            guard let raw = descriptor?.stringValue, !raw.isEmpty else { return completion(nil) }
-            completion(parse(raw, app: app))
+        stateResult(of: app) { result in completion(try? result.get()) }
+    }
+
+    static func stateResult(of app: PlayerApp, completion: @escaping (Result<PlayerState?, ReadError>) -> Void) {
+        guard app.isRunning else { return completion(.success(nil)) }
+        runScriptResult(stateScript(for: app)) { result in
+            completion(result.map { descriptor in
+                guard let raw = descriptor?.stringValue, !raw.isEmpty else { return nil }
+                return parse(raw, app: app)
+            })
         }
     }
 
@@ -181,7 +196,8 @@ enum PlayerBridge {
                         set pos to 0
                     end try
                     return pstate & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (duration of t) & sep & pos & sep & (artwork url of t)
-                on error
+                on error errorMessage number errorNumber
+                    if errorNumber is -1743 then error number errorNumber
                     return ""
                 end try
             end tell
@@ -199,7 +215,8 @@ enum PlayerBridge {
                         set pos to 0
                     end try
                     return pstate & sep & (name of t) & sep & (artist of t) & sep & (album of t) & sep & (round ((duration of t) * 1000)) & sep & pos & sep & ""
-                on error
+                on error errorMessage number errorNumber
+                    if errorNumber is -1743 then error number errorNumber
                     return ""
                 end try
             end tell
@@ -224,13 +241,19 @@ enum PlayerBridge {
 
     /// Shared AppleScript runner: one serial queue for every script the app sends.
     static func runScript(_ source: String, completion: @escaping @MainActor (NSAppleEventDescriptor?) -> Void) {
+        runScriptResult(source) { result in completion(try? result.get()) }
+    }
+
+    private static func runScriptResult(_ source: String, completion: @escaping @MainActor (Result<NSAppleEventDescriptor?, ReadError>) -> Void) {
         queue.async {
             var error: NSDictionary?
             let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
             if let error, let code = error[NSAppleScript.errorNumber] as? Int, code != 0 {
-                NSLog("Cyclop: AppleScript error \(code): \(error[NSAppleScript.errorMessage] ?? "")")
+                NSLog("Socius: AppleScript error %d", code)
+                DispatchQueue.main.async { MainActor.assumeIsolated { completion(.failure(.scripting(code))) } }
+            } else {
+                DispatchQueue.main.async { MainActor.assumeIsolated { completion(.success(result)) } }
             }
-            DispatchQueue.main.async { MainActor.assumeIsolated { completion(result) } }
         }
     }
 }

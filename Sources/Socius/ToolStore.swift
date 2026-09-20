@@ -63,6 +63,7 @@ enum ToolError: LocalizedError {
     private(set) var isChoosingFiles = false
     private(set) var filePickerFinished = 0
     func setExternalFilePicker(_ choosing: Bool) {
+        guard isChoosingFiles != choosing else { return }
         isChoosingFiles = choosing
         if !choosing { filePickerFinished += 1 }
     }

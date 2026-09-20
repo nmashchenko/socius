@@ -12,7 +12,7 @@ struct DeveloperRuntimeView: View {
             timing("Peek (s)", value: $peekSeconds)
             HStack {
                 Button("Demo 5s") { idleSeconds = 5; peekSeconds = 5 }
-                Button("Production") { idleSeconds = 30; peekSeconds = 300 }
+                Button("Normal 10s / 30s") { idleSeconds = IdleSchedule.idleDelay; peekSeconds = IdleSchedule.peekDelay }
             }.font(.system(size: 11))
             Divider()
             if let memoryMB {

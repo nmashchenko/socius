@@ -12,26 +12,28 @@ These are the actual upstream implementations, compiled in the `CyclopTools` mod
 | Snippets | SnippetStore, SnippetsPane; named reusable text, search, copy, inline edit, ordering |
 | Notes | NoteStore, NotesPane, DebouncedWrite; scratch notes with autosave and first-line titles |
 
-Shared theme, privacy controls, copy feedback, localization helpers, and skeleton views are imported too. The upstream SnippetStore test suite is included with only its module import renamed.
+Shared theme, privacy controls, copy feedback, localization helpers, and skeleton views are imported too. The upstream SnippetStore test suite is included with its module import renamed; Socius adds persistence and lifecycle regressions using disposable files and private pasteboards.
 
 ## Integration differences
 
 - Socius’s transparent pocket hosts the panes; Cyclop’s notch shell and unrelated tools are not imported.
 - Dark-theme foregrounds are adapted to Socius’s cream/sage palette. Layout and interaction code otherwise follows upstream, including click-to-copy rows, inline editing, and direct animated deletion instead of the old detached confirmation banner.
-- Support files live in `~/Library/Application Support/Socius/Cyclop`. Preferences use Socius’s app domain. Tests and native previews use isolated data/preferences.
+- Release support files live in `~/Library/Application Support/Socius/Cyclop`; development uses `Socius/Development/Cyclop` and a separate preference domain. Tests and native previews use isolated data/preferences. Development and preview clipboard images stay in their isolated support folders; existing release screenshots remain in `~/Pictures/Cyclop`.
 - The adapter adds Add files and Watch screenshots entry points, a clipboard pause switch, and file-picker suspension of the floating pocket. The core Shelf supports grouped selection and external dragging; clipboard images are saved into its screenshot vault, as in Cyclop.
 - Existing Socius snippets, notes, Shelf references, watcher folder, and clipboard preference import once. Original `tools.json` is retained. Layouts remain in that original file.
-- Music currently accepts Spotify Desktop sessions only. Browser and other player support are deferred. It reuses Cyclop’s helper and Spotify scripting fallback. Its private MediaRemote implementation is inherited upstream and may need maintenance with macOS releases.
+- Music currently accepts Spotify Desktop sessions only. Browser and other player support are deferred. It reuses Cyclop’s helper, reads Spotify directly when another app owns system Now Playing, and always addresses transport commands to Spotify. Automation failures are shown in the Music pane. Its private MediaRemote implementation is inherited upstream and may need maintenance with macOS releases.
 - AI Credits and window layouts are Socius code; Cyclop has neither tool. Pet care, gating, idle travel, and the pocket host are Socius code.
 
 ## Verification
 
-Run `swift test --disable-sandbox` and `./Scripts/bundle.sh`. Actual music playback, file dragging between apps, and Accessibility restore still require host interaction; passing parser/store tests is not a claim of complete UI parity or measured 60 fps.
+Run `swift test --disable-sandbox --no-parallel` and `./Scripts/bundle.sh`. Actual music playback, file dragging between apps, and Accessibility restore still require host interaction; passing parser/store tests is not a claim of complete UI parity or measured 60 fps.
 
-Modified upstream files: `Services/Support.swift`, `Services/ConfigStore.swift`, `Services/ShelfStore.swift`, `Services/MediaController.swift`, `Services/ScreenshotFolderWatcher.swift`, `UI/Theme.swift`, `UI/SpoilerField.swift`, `UI/ShelfPane.swift`, `UI/ClipboardPane.swift`, `UI/SnippetsPane.swift`, `UI/NotesPane.swift`, `UI/MediaPane.swift`.
+Modified upstream files: `Services/Support.swift`, `Services/ConfigStore.swift`, `Services/ShelfStore.swift`, `Services/SnippetStore.swift`, `Services/NoteStore.swift`, `Services/ClipboardStore.swift`, `Services/ScreenshotVault.swift`, `Services/ScreenshotFolderWatcher.swift`, `Services/MediaController.swift`, `Services/PlayerBridge.swift`, `Services/NowPlayingFeed.swift`, `UI/Theme.swift`, `UI/SpoilerField.swift`, `UI/ShelfPane.swift`, `UI/ClipboardPane.swift`, `UI/SnippetsPane.swift`, `UI/NotesPane.swift`, `UI/MediaPane.swift`.
 
 Additional Socius adaptations: Notes uses `PocketNoteEditor` (an owned NSTextView/NSScrollView) to avoid the legacy scrollbar gutter while retaining Cyclop’s NoteStore and autosave. Privacy dots use the light theme’s ink color. The Music volume control changes system output volume, rather than Spotify’s app volume. Its refreshed layout adds a playback-state bar indicator, restrained artwork scaling, and press feedback with Reduce Motion support; it does not sample audio. SnippetInput uses a native text field with a stable editing baseline. Clipboard and Snippets have shorter pocket pages. These changes are recorded in the integration patch where upstream files were modified.
 
 Music motion inspiration: [ElevenLabs UI audio components](https://ui.elevenlabs.io/docs/components). The SwiftUI implementation is original; no ElevenLabs dependency or service is used.
 
 PocketMetrics defines shared spacing and control sizes for imported panes and Socius screens. Clipboard rows use the same spacing scale; toggles use the sage accent.
+
+Review fixes (2026-09-20): Snippets uses Cyclop’s 26-point display rows, 3-point list spacing, plain trailing icons and 0.16-second hover animation. Native fields retain Socius’s shared 34-point size and Return/Escape handling; row edits save on focus loss. Store writes refuse unreadable or externally changed content. Closing the pocket resets privacy reveals. Clipboard pause cancels delayed images. Screenshot watching ends on folder removal/rename, and the media helper starts on first use with generation-checked cleanup. `Services/InteractionTrace.swift` is an opt-in development diagnostic and records geometry, interaction state and media-read status without track titles or other user content. Runtime log prefixes use Socius; upstream attribution, data paths and compatibility identifiers are retained.

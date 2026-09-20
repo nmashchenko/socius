@@ -16,9 +16,11 @@ struct ClaudeCLIUsageTests {
     }
     @Test(.enabled(if: ProcessInfo.processInfo.environment["SOCIUS_LIVE_CLAUDE_USAGE"] == "1"))
     func installedCLIProvidesAccountLimits() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("SociusUsageTest-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
         let windows = try await ClaudeCLIUsage.read(
             executable: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude"),
-            directory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Socius/UsageCLI"))
+            directory: directory)
         #expect(windows.contains { $0.name == "Current session" })
         #expect(windows.contains { $0.name == "Current week (all models)" })
     }

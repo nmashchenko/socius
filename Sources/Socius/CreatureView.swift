@@ -42,7 +42,7 @@ struct CreatureView: View {
     var walking = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0
-    private var still: Bool { reduceMotion || model.quiet }
+    private var still: Bool { reduceMotion }
     private var stepping: Bool { walking && !still }
     private var rippling: Bool { idleMotion && !still && !model.shellGameActive && [.content, .hungry, .grumpy].contains(model.mood) }
     private var breathing: Bool { !still && model.mood == .sleeping }
@@ -50,16 +50,14 @@ struct CreatureView: View {
     private var chewing: Bool { model.mood == .eating && (3...7).contains(phase) }
     var body: some View {
         ZStack {
-            TimelineView(.animation(minimumInterval: stepping ? 1.0 / 30 : 0.25, paused: !stepping && !rippling && !breathing && !waving)) { timeline in
+            TimelineView(.animation(minimumInterval: stepping || breathing ? 1.0 / 30 : 0.25, paused: !stepping && !rippling && !breathing && !waving)) { timeline in
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 sprite(at: time)
-                    .offset(y: stepping ? -abs(sin(time * 12)) * 3 : 0)
-                    .rotationEffect(.degrees(stepping ? sin(time * 12) * 2 : 0))
-                    .scaleEffect(x: model.mood == .sleeping ? 1.03 : chewing && !still && phase % 2 == 0 ? 1.04 : 1,
-                                 y: model.mood == .sleeping ? 0.87 + (breathing ? sin(time * 1.25) * 0.018 : 0) : chewing && !still && phase % 2 == 0 ? 0.96 : 1, anchor: .bottom)
-                    .overlay(alignment: .topTrailing) {
+                    .overlay(alignment: shyEdge == false ? .topLeading : .topTrailing) {
                         if model.mood == .sleeping {
-                            sleepBubbles(time: time).frame(width: 28, height: 40).offset(x: -4, y: 8)
+                            sleepBubbles(time: time).frame(width: 28, height: 40)
+                                .scaleEffect(x: shyEdge == false ? -1 : 1, y: 1)
+                                .offset(x: shyEdge == false ? 4 : -4, y: 8)
                         }
                     }
             }
@@ -110,15 +108,29 @@ struct CreatureView: View {
                 let progress = still ? Double(index) / 3 : (time / 4.5 + Double(index) / 3).truncatingRemainder(dividingBy: 1)
                 let width = 3 + progress * 3
                 let rect = CGRect(x: 3 + progress * 12, y: 34 - progress * 32, width: width, height: width)
-                context.stroke(Path(ellipseIn: rect), with: .color(Palette.peach.opacity(still ? 0.6 : (1 - progress) * 0.75)), lineWidth: 1)
+                context.stroke(Path(ellipseIn: rect), with: .color(model.colorway.shadow.opacity(still ? 0.6 : (1 - progress) * 0.75)), lineWidth: 1)
             }
         }.accessibilityHidden(true)
     }
     private func sprite(at time: TimeInterval) -> some View {
         Canvas { context, frame in
+            // Per-frame motion belongs in the drawing, not in SwiftUI layout
+            // modifiers. Keep the hit region and hosting view geometry stable.
+            if stepping {
+                context.translateBy(x: frame.width / 2, y: frame.height / 2 - abs(sin(time * 12)) * 3)
+                context.rotate(by: .degrees(sin(time * 12) * 2))
+                context.translateBy(x: -frame.width / 2, y: -frame.height / 2)
+            }
+            if model.mood == .sleeping || chewing && !still {
+                let x = model.mood == .sleeping ? 1.03 : phase % 2 == 0 ? 1.04 : 1
+                let y = model.mood == .sleeping ? 0.96 + (breathing ? sin(time * 1.8) * 0.025 : 0) : phase % 2 == 0 ? 0.96 : 1
+                context.translateBy(x: frame.width / 2, y: frame.height)
+                context.scaleBy(x: x, y: y)
+                context.translateBy(x: -frame.width / 2, y: -frame.height)
+            }
             let unit = floor(frame.width / 24)
             let inset = (frame.width - unit * 24) / 2
-            let coral = model.mood == .sleeping ? Color(red: 0.89, green: 0.70, blue: 0.69) : model.mood == .hungry ? Color(red: 0.82, green: 0.66, blue: 0.64) : Color(red: 0.94, green: 0.64, blue: 0.59)
+            let coral = model.mood == .hungry ? model.colorway.body.mix(with: Palette.muted, by: 0.18) : model.colorway.body
             func block(_ x: Int, _ y: Int, _ w: Int = 1, _ h: Int = 1, _ color: Color) {
                 context.fill(Path(CGRect(x: inset + CGFloat(x) * unit, y: CGFloat(y) * unit, width: CGFloat(w) * unit, height: CGFloat(h) * unit)), with: .color(color), style: FillStyle(antialiased: false))
             }
@@ -132,7 +144,7 @@ struct CreatureView: View {
                 // Arms gather under the mantle into a soft, self-contained curl.
                 block(5, 18, 14, 2, coral)
                 block(6, 20, 12, 1, coral)
-                let curl = Color(red: 0.85, green: 0.53, blue: 0.52)
+                let curl = model.colorway.shadow
                 for x in [6, 10, 14] {
                     block(x, 18, 1, 2, curl)
                     block(x + 1, 19, 2, 1, curl)
@@ -155,14 +167,16 @@ struct CreatureView: View {
                 block(20, 16 - lift - rightHello, 2, 3 + rightHello, coral)
                 block(2, 19 + lift, 2, 1, coral); block(20, 19 - lift, 2, 1, coral)
             }
-            block(7, 8, 3, 1, Color(red: 1, green: 0.79, blue: 0.73))
-            block(6, 9, 2, 1, Color(red: 1, green: 0.79, blue: 0.73))
+            block(7, 8, 3, 1, model.colorway.highlight)
+            block(6, 9, 2, 1, model.colorway.highlight)
             let eyesClosed = [.sleeping, .happy, .grumpy].contains(model.mood) || chewing
             let faceShift = shyEdge.map { $0 ? 2 : -2 } ?? 0
             for x in [7 + faceShift, 15 + faceShift] {
                 if eyesClosed {
                     block(x, 12, 2, 1, Palette.ink)
-                    if model.mood != .sleeping { block(x - 1, 13, 1, 1, Palette.ink); block(x + 2, 13, 1, 1, Palette.ink) }
+                    if model.mood == .sleeping {
+                        block(x - 1, 11, 1, 1, Palette.ink); block(x + 2, 11, 1, 1, Palette.ink)
+                    } else { block(x - 1, 13, 1, 1, Palette.ink); block(x + 2, 13, 1, 1, Palette.ink) }
                 } else {
                     block(x, 11, 2, 3, Palette.ink)
                     block(x, 11, 1, 1, Palette.cream)
@@ -172,7 +186,7 @@ struct CreatureView: View {
             block(5, 14, 3, 1, blush); block(16, 14, 3, 1, blush)
             if chewing && phase % 2 == 0 {
                 block(11, 15, 2, 2, Palette.ink)
-            } else if !model.toolsAvailable || model.mood == .grumpy {
+            } else if model.mood != .sleeping && (!model.toolsAvailable || model.mood == .grumpy) {
                 block(11, 15, 2, 1, Palette.ink)
                 block(10, 16, 1, 1, Palette.ink); block(13, 16, 1, 1, Palette.ink)
             } else {

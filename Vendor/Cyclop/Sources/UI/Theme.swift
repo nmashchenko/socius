@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Shared layout scale for Socius and its imported pocket panes.
 public enum PocketMetrics {
+    public static let inputFill = Color(red: 0.37, green: 0.47, blue: 0.31).opacity(0.08)
     public static let small: CGFloat = 6
     public static let rowGap: CGFloat = 8
     public static let controlInset: CGFloat = 12

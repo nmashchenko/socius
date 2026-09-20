@@ -10,6 +10,7 @@ enum ScreenshotVault {
     /// Desktop or Documents it is not behind a TCC prompt. Falls back to the
     /// app's own support folder, which always works.
     static let folder: URL = {
+        if Support.isPreview || SociusStorage.isDevelopment { return Support.directory("Screenshots") }
         let fm = FileManager.default
         let pictures = fm.homeDirectoryForCurrentUser
             .appendingPathComponent("Pictures", isDirectory: true)
@@ -40,7 +41,7 @@ enum ScreenshotVault {
             try png.write(to: url, options: .atomic)
             return url
         } catch {
-            NSLog("Cyclop: failed to save image: \(error.localizedDescription)")
+            NSLog("Socius: failed to save image: \(error.localizedDescription)")
             return nil
         }
     }

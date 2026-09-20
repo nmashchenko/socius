@@ -104,11 +104,11 @@ nonisolated enum ClaudeCLIUsage {
         process.executableURL = executable
         process.currentDirectoryURL = directory
         process.arguments = ["--setting-sources", "", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
-                             "--settings", "{\"disableAllHooks\":true}", "--tools", "", "--permission-mode", "manual"]
+                             "--settings", "{\"disableAllHooks\":true}", "--tools", ""]
         process.standardInput = terminal; process.standardOutput = terminal; process.standardError = terminal
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
-        environment["PATH"] = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        environment["PATH"] = CLIExecutableLocator.runtimePath(for: executable)
         process.environment = environment
         try process.run()
         defer {
@@ -146,7 +146,9 @@ nonisolated enum ClaudeCLIUsage {
                 if windows.contains(where: { $0.name == "Current week (all models)" }),
                    windows.contains(where: { $0.name == "Current session" }) { return windows }
             }
-            if !process.isRunning { break }
+            if !process.isRunning {
+                throw ToolError.message("Claude Code exited before returning usage. Open Claude Code once to finish setup or sign in, then refresh here.")
+            }
         }
         throw ToolError.message("Claude CLI did not return a complete /usage screen. Open Claude Code and check /usage or sign in again.")
     }

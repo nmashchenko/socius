@@ -1,4 +1,5 @@
 import AppKit
+import CyclopTools
 import Observation
 import QuartzCore
 
@@ -25,10 +26,10 @@ enum EdgeDockGeometry {
 }
 
 struct IdleSchedule {
-    static let idleDelay: TimeInterval = 30
-    static let peekDelay: TimeInterval = 300
-    var idleSeconds: TimeInterval = 30
-    var peekSeconds: TimeInterval = 300
+    static let idleDelay: TimeInterval = 10
+    static let peekDelay: TimeInterval = 30
+    var idleSeconds: TimeInterval = Self.idleDelay
+    var peekSeconds: TimeInterval = Self.peekDelay
     static let peekDuration: TimeInterval = 3
     private(set) var lastInteraction: Date
     var nextPeek: Date?
@@ -58,8 +59,8 @@ struct IdleSchedule {
     private(set) var reminder: String?
     private(set) var leftEdge = false
     var enabled = true { didSet { if !enabled { interact() } } }
-    var idleSeconds: Double = 30 { didSet { updateTiming() } }
-    var peekSeconds: Double = 300 { didSet { updateTiming() } }
+    var idleSeconds: Double = IdleSchedule.idleDelay { didSet { updateTiming() } }
+    var peekSeconds: Double = IdleSchedule.peekDelay { didSet { updateTiming() } }
     private func updateTiming() {
         schedule.idleSeconds = max(1, idleSeconds)
         schedule.peekSeconds = max(1, peekSeconds)
@@ -88,13 +89,18 @@ struct IdleSchedule {
     private var reaction = 0
     private var peekStarted: Date?
     private var reminderIndex = 0
-    private var motionReduced: Bool { model.quiet || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private let automaticSizing: Bool
+    private let reduceMotion: () -> Bool
+    private var motionReduced: Bool { reduceMotion() }
     private var tuckedTilt: Double { motionReduced ? 0 : leftEdge ? 4 : -4 }
 
-    init(model: PetModel) { self.model = model; super.init() }
+    init(model: PetModel, automaticSizing: Bool = false, reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }) {
+        self.model = model; self.automaticSizing = automaticSizing; self.reduceMotion = reduceMotion; super.init()
+    }
     func start(window: NSWindow) {
         self.window = window; homeFrame = window.frame; window.delegate = self
         reaction = model.reaction
+        resizeForScreen()
         watchTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
@@ -103,8 +109,9 @@ struct IdleSchedule {
         }
     }
     func screenChanged() {
+        resizeForScreen()
         guard let screen = screen(for: homeFrame) else { return }
-        repositionHome(EdgeDockGeometry.restoredFrame(home: homeFrame, visibleScreen: screen.visibleFrame))
+        repositionHome(reachableHome(on: screen))
     }
     private func cancelTravel() {
         displayLink?.invalidate(); displayLink = nil; travelCompletion = nil
@@ -112,9 +119,23 @@ struct IdleSchedule {
         moving = false
     }
     func stop() { watchTask?.cancel(); cancelTravel() }
+    func suspendPresentation() {
+        (window as? PetPanel)?.petInput?.cancel()
+        if phase == .hiding || phase == .returning { repositionHome(homeFrame) }
+        else { cancelTravel() }
+        pointerInside = false
+        menuOpen = false
+        reminder = nil
+    }
+    func resumePresentation() {
+        schedule.interact(at: Date())
+        if phase == .peeking { phase = .tucked }
+        if phase == .tucked { schedule.tucked(at: Date()) }
+    }
     func hover(_ inside: Bool) {
         pointerInside = inside
-        // Keep the target under the pointer until the user actually clicks it.
+        // Pointer entry/exit is an interaction; a stationary pointer must not
+        // reset the idle clock forever after a drag or a missed exit event.
         if phase == .engaged { schedule.interact(at: Date()) }
     }
     func interact() {
@@ -166,15 +187,25 @@ struct IdleSchedule {
     func dragPet(to point: CGPoint) {
         guard dragging else { return }
         moving = true
-        window?.setFrameOrigin(CGPoint(x: dragOrigin.x + point.x - dragPointerOrigin.x,
-                                      y: dragOrigin.y + point.y - dragPointerOrigin.y))
+        var origin = CGPoint(x: dragOrigin.x + point.x - dragPointerOrigin.x,
+                             y: dragOrigin.y + point.y - dragPointerOrigin.y)
+        let requested = origin
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) {
+            InteractionTrace.record("drag point=\(point) requested=\(requested) screen=\(screen.frame) visible=\(screen.visibleFrame) scale=\(model.desktopScale) feet=\(model.metrics.feetFromBottom) attached=\((window as? PetPanel)?.petInput != nil)")
+            origin.y = min(max(origin.y, screen.frame.minY - model.metrics.feetFromBottom),
+                           screen.visibleFrame.maxY - model.metrics.headFromBottom - 4)
+        }
+        window?.setFrameOrigin(origin)
+        InteractionTrace.record("drag constrained=\(origin) actual=\(String(describing: window?.frame))")
         moving = false
     }
     func endUserDrag() {
         guard dragging, let window else { return }
         dragging = false
+        InteractionTrace.record("drag ended; idle delay=\(idleSeconds)")
         homeFrame = window.frame
         phase = .engaged; offset = 0; tilt = 0; retreatAfterCare = false
+        resizeForScreen()
         schedule.interact(at: Date())
     }
     func windowDidMove(_ notification: Notification) {
@@ -191,12 +222,41 @@ struct IdleSchedule {
         homeFrame = frame; phase = .engaged; offset = 0; tilt = 0; reminder = nil
         moving = false; schedule.interact(at: Date())
     }
+    /// Resize after crossing displays, never in the middle of a pointer gesture.
+    func resizeForScreen(_ destination: NSScreen? = nil) {
+        guard automaticSizing, !dragging, let window, let screen = destination ?? screen(for: window.frame) else { return }
+        let next = PetMetrics.scale(for: screen.visibleFrame.size, adjustment: model.sizeAdjustment)
+        guard abs(next - model.desktopScale) > 0.001 || window.frame.size != model.metrics.panelSize else { return }
+        let wasIdle = phase == .tucked || phase == .peeking
+        let center = CGPoint(x: homeFrame.midX, y: homeFrame.minY + model.metrics.centerFromBottom)
+        model.desktopScale = next
+        repositionHome(model.metrics.frame(around: center, in: screen.petMovementFrame))
+        if wasIdle { beginIdle() }
+    }
+    func summon(at point: CGPoint, on screen: NSScreen) {
+        guard !dragging, !pointerPressed, let window else { return }
+        let sameScreen = window.screen == screen
+        resizeForScreen(screen)
+        let target = model.metrics.frame(around: point, in: screen.petMovementFrame)
+        retreatAfterCare = false; reminder = nil; phase = .returning
+        homeFrame = target
+        // Crossing a display boundary should not sweep across unrelated screens.
+        if !sameScreen {
+            repositionHome(target)
+            return
+        }
+        slide(to: target) { [weak self] in
+            guard let self else { return }
+            self.phase = .engaged; self.homeFrame = target
+            self.schedule.interact(at: Date())
+        }
+    }
     func update(at now: Date) {
+        guard !model.desktopSuppressed, !model.onboardingActive else { return }
         if pointerPressed || dragging {
             schedule.interact(at: now)
             return
         }
-        if NSEvent.pressedMouseButtons & 1 != 0 { schedule.interact(at: now); return }
         if reaction != model.reaction { reaction = model.reaction; interact() }
         if model.shellGameActive || model.offering != nil || [.eating, .playing].contains(model.mood) { retreatAfterCare = true }
         if !enabled { retreatAfterCare = false }
@@ -205,7 +265,7 @@ struct IdleSchedule {
             hide(at: now)
             return
         }
-        let busy = menuOpen || pointerInside || careActive
+        let busy = menuOpen || careActive
         if !enabled || busy { if phase == .engaged { schedule.interact(at: now) }; return }
         switch phase {
         case .engaged: if schedule.shouldHide(at: now) { hide(at: now) }
@@ -213,7 +273,7 @@ struct IdleSchedule {
             if model.mood != .sleeping && schedule.shouldPeek(at: now) { peek(at: now) }
         case .peeking:
             if let peekStarted, now.timeIntervalSince(peekStarted) >= IdleSchedule.peekDuration {
-                phase = .tucked; offset = leftEdge ? -95 : 95; tilt = tuckedTilt; reminder = nil
+                phase = .tucked; offset = leftEdge ? -model.metrics.tuckOffset : model.metrics.tuckOffset; tilt = tuckedTilt; reminder = nil
             }
         case .hiding, .returning: break
         }
@@ -231,28 +291,29 @@ struct IdleSchedule {
         homeFrame = window.frame
         leftEdge = homeFrame.midX < screen.visibleFrame.midX
         phase = .hiding; reminder = nil
+        InteractionTrace.record("desktop entering idle; delay=\(idleSeconds)")
         let target = EdgeDockGeometry.dockFrame(home: homeFrame, visibleScreen: screen.visibleFrame)
-        slide(to: target, targetOffset: leftEdge ? -95 : 95, targetTilt: tuckedTilt) { [weak self] in
+        slide(to: target, targetOffset: leftEdge ? -model.metrics.tuckOffset : model.metrics.tuckOffset, targetTilt: tuckedTilt) { [weak self] in
             guard let self else { return }
             self.phase = .tucked
-            self.schedule.tucked(at: Date())
+            self.schedule.tucked(at: max(now, Date()))
         }
     }
     private func peek(at now: Date) {
         phase = .peeking; peekStarted = now
         schedule.tucked(at: now)
-        let showReminder = !model.quiet
-        offset = leftEdge ? -95 : 95
-        if showReminder {
-            let lines = ["Just a little hello.", "Eight arms, if you need a hand.", "I’m here. No rush."]
-            reminder = model.fullness <= 20 ? "A tiny shrimp break sometime?" : lines[reminderIndex % lines.count]
-            reminderIndex += 1
-        }
+        offset = leftEdge ? -model.metrics.tuckOffset : model.metrics.tuckOffset
+        let lines = ["Just a little hello.", "Eight arms, if you need a hand.", "I’m here. No rush."]
+        reminder = model.fullness <= 20 ? "A tiny shrimp break sometime?" : lines[reminderIndex % lines.count]
+        reminderIndex += 1
+    }
+    private func reachableHome(on screen: NSScreen) -> CGRect {
+        model.metrics.frame(around: CGPoint(x: homeFrame.midX, y: homeFrame.minY + model.metrics.centerFromBottom), in: screen.petMovementFrame)
     }
     private func restore() {
         guard let window, let screen = screen(for: homeFrame) else { return }
         phase = .returning; reminder = nil
-        let target = EdgeDockGeometry.restoredFrame(home: homeFrame, visibleScreen: screen.visibleFrame)
+        let target = reachableHome(on: screen)
         slide(to: target) { [weak self] in
             self?.phase = .engaged; self?.homeFrame = window.frame
             self?.schedule.interact(at: Date())
@@ -305,16 +366,31 @@ struct IdleSchedule {
         moving = true
         window.setFrame(EdgeDockGeometry.dockFrame(home: homeFrame, visibleScreen: screen.visibleFrame), display: true)
         moving = false
-        phase = .tucked; offset = leftEdge ? -95 : 95; tilt = tuckedTilt; reminder = nil
+        phase = .tucked; offset = leftEdge ? -model.metrics.tuckOffset : model.metrics.tuckOffset; tilt = tuckedTilt; reminder = nil
         schedule.tucked(at: Date())
     }
     func simulateIdle() {
+        guard !model.desktopSuppressed, !model.onboardingActive else { return }
+        model.cancelActivity(); reaction = model.reaction
         menuOpen = false; pointerInside = false
+        if phase == .hiding || phase == .returning { repositionHome(homeFrame) }
+        if phase == .peeking || phase == .tucked {
+            phase = .tucked; reminder = nil
+            schedule.tucked(at: Date())
+            return
+        }
         guard phase == .engaged else { return }
         hide(at: Date())
     }
     func simulateReminder() {
-        guard phase == .tucked || phase == .peeking else { return }
+        guard !model.desktopSuppressed, !model.onboardingActive else { return }
+        model.cancelActivity(); reaction = model.reaction
+        menuOpen = false; pointerInside = false
+        if phase == .engaged { beginIdle() }
+        else if phase == .hiding || phase == .returning {
+            repositionHome(homeFrame)
+            beginIdle()
+        }
         peek(at: Date())
     }
 }
