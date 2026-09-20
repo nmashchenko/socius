@@ -10,7 +10,30 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  check-existing-release:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.check.outputs.published }}
+    steps:
+      - id: check
+        name: Skip tags already published from a local notarized build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          echo "published=false" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" = tag ]; then
+            if gh release view "$TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-draft"; then
+              if [ "$(cat "$RUNNER_TEMP/release-draft")" = false ]; then
+                echo "published=true" >> "$GITHUB_OUTPUT"
+              fi
+            fi
+          fi
   release:
+    needs: check-existing-release
+    if: needs.check-existing-release.outputs.published != 'true'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
