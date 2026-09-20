@@ -4,13 +4,17 @@ import Testing
 @testable import Socius
 
 @MainActor @Suite struct PocketMotionTests {
-    @Test func pocketAttachesAsChildAndCleansUpOnDismiss() async throws {
+    @Test(arguments: [false, true])
+    func pocketAttachesAsChildAndCleansUpOnDismiss(onRight: Bool) async throws {
+        _ = NSApplication.shared
+        let screen = try #require(NSScreen.main)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PocketHostTests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
         let hub = ToolHub(store: ToolStore(directory: directory))
         let model = PetModel()
         let host = NSHostingView(rootView: AnchoredPocket(isPresented: .constant(true), model: model, hub: hub))
-        let window = NSWindow(contentRect: CGRect(x: 500, y: 400, width: 140, height: 140), styleMask: .borderless, backing: .buffered, defer: false)
+        let x = onRight ? screen.visibleFrame.maxX - 164 : screen.visibleFrame.minX + 24
+        let window = NSWindow(contentRect: CGRect(x: x, y: screen.visibleFrame.midY - 70, width: 140, height: 140), styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
         window.orderFrontRegardless()
         host.layoutSubtreeIfNeeded()
@@ -22,7 +26,8 @@ import Testing
         window.setContentSize(CGSize(width: 100, height: 100))
         host.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(100))
-        #expect(abs(pocket.frame.minX - (previousX - 40)) < 1)
+        // Resizing moves the anchor's right edge, while its left edge stays fixed.
+        #expect(abs(pocket.frame.minX - (previousX + (onRight ? 0 : -40))) < 1)
         host.rootView = AnchoredPocket(isPresented: .constant(false), model: model, hub: hub)
         try await Task.sleep(for: .milliseconds(100))
         #expect(window.childWindows?.isEmpty != false)
