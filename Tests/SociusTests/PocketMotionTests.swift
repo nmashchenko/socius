@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import Socius
 
-@MainActor @Suite struct PocketMotionTests {
+@MainActor @Suite(.serialized) struct PocketMotionTests {
     @Test(arguments: [false, true])
     func pocketAttachesAsChildAndCleansUpOnDismiss(onRight: Bool) async throws {
         _ = NSApplication.shared
@@ -29,7 +29,11 @@ import Testing
         // Resizing moves the anchor's right edge, while its left edge stays fixed.
         #expect(abs(pocket.frame.minX - (previousX + (onRight ? 0 : -40))) < 1)
         host.rootView = AnchoredPocket(isPresented: .constant(false), model: model, hub: hub)
-        try await Task.sleep(for: .milliseconds(100))
+        let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while window.childWindows?.isEmpty == false, ContinuousClock.now < dismissalDeadline {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+        }
         #expect(window.childWindows?.isEmpty != false)
         window.orderOut(nil)
     }
