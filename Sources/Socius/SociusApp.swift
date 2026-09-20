@@ -150,7 +150,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
         guard welcome == nil else { return }
         pet.cancelActivity()
         if let panel = petPanel { edgeDock.repositionHome(panel.frame) }
-        guard let screen = NSScreen.main else { edgeDock.beginIdle(); return }
+        guard let screen = studio?.screen ?? NSScreen.main else { edgeDock.beginIdle(); return }
         edgeDock.menuOpen = true
         petPanel?.orderOut(nil)
         let window = PetPanel(contentRect: screen.visibleFrame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -162,15 +162,20 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
         NSApp.activate(ignoringOtherApps: true)
     }
     private func finishWelcome() {
-        guard welcome != nil else { return }
+        guard let welcome else { return }
         UserDefaults.standard.set(true, forKey: "didWelcomePet")
-        welcome?.orderOut(nil); welcome?.contentView = nil; welcome = nil
-        edgeDock.menuOpen = false
-        if let screen = NSScreen.main, let panel = petPanel {
-            edgeDock.repositionHome(CGRect(x: screen.visibleFrame.midX - panel.frame.width / 2,
-                y: screen.visibleFrame.midY - panel.frame.height / 2, width: panel.frame.width, height: panel.frame.height))
+        // Match the onboarding sprite exactly. DesktopPetView's 70/140/40
+        // stack puts the pet center 120 points above its 270-point panel bottom.
+        if let panel = petPanel {
+            edgeDock.repositionHome(CGRect(x: welcome.frame.midX - panel.frame.width / 2,
+                y: welcome.frame.midY - 120, width: panel.frame.width, height: panel.frame.height))
+            panel.orderFrontRegardless()
+            panel.displayIfNeeded()
         }
-        petPanel?.orderFrontRegardless()
+        welcome.orderOut(nil)
+        welcome.contentView = nil
+        self.welcome = nil
+        edgeDock.menuOpen = false
         edgeDock.simulateIdle()
     }
     @objc func showStudio() {

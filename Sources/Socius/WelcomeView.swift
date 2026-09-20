@@ -25,33 +25,40 @@ struct WelcomeView: View {
         GeometryReader { geometry in
             ZStack {
                 WelcomeBackdrop().overlay(Palette.cream.opacity(0.25)).ignoresSafeArea()
-                VStack(spacing: 20) {
-                    VStack(spacing: 8) {
-                        Text("Hello, I’m \(model.displayName).")
-                            .font(.system(size: 30, weight: .medium, design: .serif))
-                        Text("Your little desktop helper.\nClick me anytime to see what I can do.")
-                            .font(.system(size: 15)).multilineTextAlignment(.center)
-                            .foregroundStyle(Palette.muted)
-                    }.opacity(greeting ? 1 : 0)
-                    CreatureView(model: model, size: 160, idleMotion: false)
-                        .offset(x: arrived || gentle ? 0 : -geometry.size.width * 0.6,
-                                y: arrived || gentle ? 0 : 80)
-                        .opacity(arrived ? 1 : 0)
-                    Button("Let’s go", action: complete)
-                        .buttonStyle(PocketButtonStyle(prominent: true))
-                        .opacity(greeting ? 1 : 0).disabled(!greeting)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .opacity(exiting ? 0 : 1)
+                VStack(spacing: 8) {
+                    Text("Hello, I’m \(model.displayName).")
+                        .font(.system(size: 30, weight: .medium, design: .serif))
+                    Text("Your little desktop helper.\nClick me anytime to see what I can do.")
+                        .font(.system(size: 15)).multilineTextAlignment(.center)
+                        .foregroundStyle(Palette.muted)
+                }
+                .position(x: geometry.size.width / 2, y: geometry.size.height / 2 - 145)
+                .opacity(greeting && !exiting ? 1 : 0)
+                CreatureView(model: model, size: 140, idleMotion: false)
+                    .scaleEffect(arrived || gentle ? 1 : 0.92)
+                    .rotationEffect(.degrees(arrived || gentle ? 0 : -12))
+                    .offset(x: arrived || gentle ? 0 : -geometry.size.width * 0.6,
+                            y: arrived || gentle ? 0 : 100)
+                    .opacity(arrived ? 1 : 0)
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                    .onTapGesture(perform: complete)
+                Button("Let’s go", action: complete)
+                    .buttonStyle(PocketButtonStyle(prominent: true))
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2 + 130)
+                    .opacity(greeting && !exiting ? 1 : 0).disabled(!greeting || finished)
                 VStack {
                     HStack { Spacer(); Button("Skip", action: complete).buttonStyle(PocketButtonStyle(compact: true)) }
                     Spacer()
-                }.padding(28)
+                }.padding(28).opacity(exiting ? 0 : 1)
             }.foregroundStyle(Palette.ink)
-        }.preferredColorScheme(.light).opacity(exiting ? 0 : 1)
+        }.preferredColorScheme(.light)
         .onExitCommand(perform: complete)
         .task {
             withAnimation(gentle ? .easeOut(duration: 0.2) : .spring(duration: 0.5, bounce: 0.2)) { arrived = true }
             do {
                 try await Task.sleep(for: .milliseconds(500))
+                guard !finished else { return }
                 withAnimation(.easeOut(duration: 0.2)) { greeting = true }
                 try await Task.sleep(for: .seconds(7))
                 complete()
@@ -61,9 +68,10 @@ struct WelcomeView: View {
     private func complete() {
         guard !finished else { return }
         finished = true
+        let settling = !greeting && !gentle
         withAnimation(.easeOut(duration: 0.2)) { exiting = true }
         Task {
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(settling ? 500 : 200))
             finish()
         }
     }
