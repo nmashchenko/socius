@@ -30,7 +30,6 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
     private var petPanel: PetPanel?
     private var studio: NSWindow?
     private var welcome: NSWindow?
-    private var previewWelcome: NSWindow?
     private let hotkey = PetHotkey()
     private lazy var tools = ToolHub()
     private var statusItem: NSStatusItem?
@@ -147,22 +146,6 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
         panel.orderFrontRegardless()
     }
     @objc func showSettings() { showTool(.settings) }
-    private func showPreviewWelcome() {
-        guard previewWelcome == nil, let screen = studio?.screen ?? NSScreen.main else { return }
-        let window = PetPanel(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .floating
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: WelcomeView(model: PetModel()) { [weak self] in
-            self?.previewWelcome?.orderOut(nil)
-            self?.previewWelcome?.contentView = nil
-            self?.previewWelcome = nil
-        })
-        previewWelcome = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
     private func showWelcome() {
         guard welcome == nil else { return }
         pet.cancelActivity()
@@ -199,7 +182,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
             window.backgroundColor = NSColor(red: 0.96, green: 0.95, blue: 0.91, alpha: 1)
             window.minSize = NSSize(width: 900, height: 680)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: PlaygroundView(replayOnboarding: { [weak self] in self?.showPreviewWelcome() }))
+            window.contentView = NSHostingView(rootView: PlaygroundView(replayOnboarding: { [weak self] in self?.showWelcome() }))
             window.center(); studio = window
         }
         studio?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
