@@ -1,3 +1,4 @@
+import CyclopTools
 import AppKit
 import Observation
 
@@ -206,7 +207,7 @@ enum ClaudeUsageBridge {
     static func receive() {
         let input = FileHandle.standardInput.readDataToEndOfFile()
         if input.count <= 1_000_000, let object = try? JSONSerialization.jsonObject(with: input) as? [String: Any] {
-            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Socius")
+            let directory = SociusStorage.directory
             do {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let reduced: [String: Any] = ["rate_limits": object["rate_limits"] as? [String: Any] ?? [:]]

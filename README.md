@@ -76,6 +76,8 @@ Tests cover pet interactions, display-linked travel, persistence and corrupt-fil
 
 Socius ships a predefined set of pocket tools. Active implementations live in `Sources/Socius` and `Vendor/Cyclop/Sources`; obsolete scaffolding has been removed.
 
+Development builds keep tool data in `~/Library/Application Support/Socius/Development` and preferences in `app.socius.desktop.development`. Signed release builds use `~/Library/Application Support/Socius` and their own preferences, including first-launch onboarding. Installing an update preserves release data; it does not reset onboarding.
+
 Local builds use the persistent **Socius Local Development** code-signing identity in the login Keychain. Its certificate is trusted for code signing only. The designated requirement pins the app identifier and signing certificate, rather than the changing binary hash, so rebuilding retains the same permission identity. The transition from older ad-hoc builds may require granting Accessibility access once more. This follows [Apple’s designated-requirement guidance](https://developer.apple.com/library/archive/technotes/tn2206/). A production release should use an Apple-issued signing identity via `CODESIGN_IDENTITY`.
 
 ## Inspiration

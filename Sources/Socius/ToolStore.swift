@@ -1,3 +1,4 @@
+import CyclopTools
 import AppKit
 import Observation
 
@@ -74,7 +75,7 @@ enum ToolError: LocalizedError {
     private var seenImages = Set<String>()
 
     init(directory: URL? = nil, pasteboard: NSPasteboard = .general) {
-        self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Socius")
+        self.directory = directory ?? SociusStorage.directory
         self.pasteboard = pasteboard
         pasteboardChange = pasteboard.changeCount
         let file = self.directory.appendingPathComponent("tools.json")

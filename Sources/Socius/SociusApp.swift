@@ -1,3 +1,4 @@
+import CyclopTools
 import AppKit
 import SwiftUI
 
@@ -34,12 +35,12 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
     private lazy var tools = ToolHub()
     private var statusItem: NSStatusItem?
     private var careClock: Task<Void, Never>?
-    let pet = PetModel(preferences: CommandLine.arguments.contains("--render-preview") ? nil : .standard)
+    let pet = PetModel(preferences: CommandLine.arguments.contains("--render-preview") ? nil : SociusStorage.preferences)
     private lazy var edgeDock = EdgeDockController(model: pet)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        if CommandLine.arguments.contains("--render-preview") {
+        if CommandLine.arguments.contains("--render-preview") || CommandLine.arguments.contains("--render-icon") {
             if CommandLine.arguments.contains("--sleeping") { pet.sleep() }
             if CommandLine.arguments.contains("--pocket") { pet.panelOpen = true }
             let toolName = CommandLine.arguments.firstIndex(of: "--tool").flatMap { index in
@@ -61,16 +62,18 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
                     _ = previewHub.store.update { $0.shelf = [ShelfItem(path: sample.path)] }
                 }
             }
-            let width: CGFloat = toolName == nil ? 1000 : toolName == "Home" ? 380 : 420
-            let height: CGFloat = toolName == nil ? 740 : toolName == "Home" ? 350 : previewHub.toolHeight
+            let width: CGFloat = CommandLine.arguments.contains("--render-icon") ? 1024 : toolName == nil ? 1000 : toolName == "Home" ? 380 : 420
+            let height: CGFloat = CommandLine.arguments.contains("--render-icon") ? 1024 : toolName == nil ? 740 : toolName == "Home" ? 350 : previewHub.toolHeight
             let view = Group {
-                if CommandLine.arguments.contains("--welcome") { WelcomeView(model: pet, finish: {}) }
+                if CommandLine.arguments.contains("--render-icon") { SociusIconView() }
+                else if CommandLine.arguments.contains("--welcome") { WelcomeView(model: pet, finish: {}) }
                 else if toolName == "Home" { PocketView(model: pet, close: {}, nativePopover: true, hub: previewHub) }
                 else if toolName != nil { PocketToolView(hub: previewHub, pet: pet, back: {}, close: {}) }
                 else { PlaygroundView() }
             }.frame(width: width, height: height)
             let host = NSHostingView(rootView: view)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isOpaque = false; window.backgroundColor = .clear
             window.contentView = host
             window.orderFrontRegardless()
             host.layoutSubtreeIfNeeded()
@@ -78,7 +81,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
             if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
                 host.cacheDisplay(in: host.bounds, to: bitmap)
                 if let png = bitmap.representation(using: .png, properties: [:]) {
-                    try? png.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(toolName != nil ? "build/tool-preview.png" : CommandLine.arguments.contains("--sleeping") ? "build/sleep-preview.png" : CommandLine.arguments.contains("--pocket") ? "build/pocket-preview.png" : "build/interaction-preview.png"))
+                    try? png.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(CommandLine.arguments.contains("--render-icon") ? "build/AppIcon.png" : toolName != nil ? "build/tool-preview.png" : CommandLine.arguments.contains("--sleeping") ? "build/sleep-preview.png" : CommandLine.arguments.contains("--pocket") ? "build/pocket-preview.png" : "build/interaction-preview.png"))
                 }
             }
             window.orderOut(nil)
@@ -118,7 +121,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
         item.menu = menu; statusItem = item
         if let flag = CommandLine.arguments.firstIndex(of: "--tool"), CommandLine.arguments.indices.contains(flag + 1),
            let tool = PocketTool(rawValue: CommandLine.arguments[flag + 1]) { panel.orderFrontRegardless(); showTool(tool) }
-        else if CommandLine.arguments.contains("--onboarding") || !UserDefaults.standard.bool(forKey: "didWelcomePet") {
+        else if CommandLine.arguments.contains("--onboarding") || !SociusStorage.preferences.bool(forKey: "didWelcomePet") {
             showWelcome()
         } else {
             edgeDock.beginIdle()
@@ -164,7 +167,7 @@ final class PetHostingView<Content: View>: NSHostingView<Content> {
     }
     private func finishWelcome() {
         guard let welcome else { return }
-        UserDefaults.standard.set(true, forKey: "didWelcomePet")
+        SociusStorage.preferences.set(true, forKey: "didWelcomePet")
         // Match the onboarding sprite exactly. DesktopPetView's 70/140/40
         // stack puts the pet center 120 points above its 270-point panel bottom.
         if let panel = petPanel {

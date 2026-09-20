@@ -7,6 +7,19 @@ import Foundation
 /// three lines: find the support directory, append the app's name, make sure it
 /// exists. Identical every time, and the kind of thing that stays identical
 /// only until one copy is edited and the others are not.
+public enum SociusStorage {
+    public static var isDevelopment: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "SociusBuildChannel") as? String != "release"
+    }
+    public static var directory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(isDevelopment ? "Socius/Development" : "Socius", isDirectory: true)
+    }
+    public static var preferences: UserDefaults {
+        isDevelopment ? UserDefaults(suiteName: "app.socius.desktop.development")! : .standard
+    }
+}
+
 enum Support {
     static let isPreview = ProcessInfo.processInfo.arguments.contains("--render-preview")
         || ProcessInfo.processInfo.arguments.contains(where: { $0.contains(".xctest") })
@@ -21,8 +34,7 @@ enum Support {
             try? fm.createDirectory(at: preview, withIntermediateDirectories: true)
             return preview
         }
-        let url = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Socius/Cyclop", isDirectory: true)
+        let url = SociusStorage.directory.appendingPathComponent("Cyclop", isDirectory: true)
         try? fm.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
@@ -44,5 +56,5 @@ enum Support {
 
 /// Keep native previews and test hosts away from the running app’s preferences.
 @MainActor enum PocketDefaults {
-    static let shared: UserDefaults = Support.isPreview ? UserDefaults(suiteName: "Socius.Preview.\(ProcessInfo.processInfo.processIdentifier)")! : .standard
+    static let shared: UserDefaults = Support.isPreview ? UserDefaults(suiteName: "Socius.Preview.\(ProcessInfo.processInfo.processIdentifier)")! : SociusStorage.preferences
 }

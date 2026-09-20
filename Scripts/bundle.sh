@@ -12,7 +12,11 @@ if [ "$IDENTITY" != "-" ] && ! security find-certificate -c "$IDENTITY" >/dev/nu
 fi
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Socius" "$APP/Contents/MacOS/Socius"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+CHANNEL=development
+if [[ "$IDENTITY" == "Developer ID Application:"* ]]; then CHANNEL=release; fi
+/usr/libexec/PlistBuddy -c "Add :SociusBuildChannel string $CHANNEL" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP/Contents/Info.plist"
 cp Vendor/Cyclop/LICENSE "$APP/Contents/Resources/Cyclop-LICENSE.txt"
